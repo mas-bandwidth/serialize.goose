@@ -1,6 +1,6 @@
 // test/smoke -- TestSmoke (DESIGN.md (a), (e), (f), (g)): the entry compiles,
-// every API name DESIGN.md (a) lists resolves on all three streams, a family
-// stub aborts naming itself, and the latch holds (STANDARD.md, Reader
+// every API name DESIGN.md (a) lists resolves on all three streams, API misuse
+// aborts naming its rule, and the latch holds (STANDARD.md, Reader
 // Obligations, Failure is terminal).
 
 import .serialize;
@@ -148,14 +148,13 @@ fn TestSmoke() {
     assert(serialize_bytes_processed(measure) == 3);
 }
 
-// A family stub aborts naming itself (DESIGN.md (f)): proved through the
-// runner by its exit and its message. The probe names a family card
-// serialize-goose-integers did not fill, so the stub contract stays proved
-// after serialize_int becomes real.
-// want-abort: serialize: serialize_fixed32 not implemented
-fn TestSmokeStubAborts() {
+// API misuse aborts naming its rule (DESIGN.md (e)): proved through the
+// runner by its exit and its message. Every family is implemented now, so the
+// probe submits an out-of-range bit count rather than a family stub.
+// want-abort: serialize: bits must be in [1,32]
+fn TestSmokeMisuseAborts() {
     var buffer: u8[8] = [0; 8];
     var w = serialize_write_stream_init(buffer);
-    var value: i32 = 5;
-    serialize_fixed32(w, value, 16, 16, -5, 5);
+    var value: u32 = 5;
+    serialize_bits(w, value, 33);
 }
