@@ -149,10 +149,13 @@ fn TestSmoke() {
 }
 
 // A family stub aborts naming itself (DESIGN.md (f)): proved through the
-// runner by its exit and its message.
-// want-abort: serialize: serialize_int not implemented
+// runner by its exit and its message. The probe names a family card
+// serialize-goose-integers did not fill, so the stub contract stays proved
+// after serialize_int becomes real.
+// want-abort: serialize: serialize_fixed32 not implemented
 fn TestSmokeStubAborts() {
     var buffer: u8[8] = [0; 8];
     var w = serialize_write_stream_init(buffer);
-    serialize_int(w, 5, 0, 10);
+    var value: i32 = 5;
+    serialize_fixed32(w, value, 16, 16, -5, 5);
 }
