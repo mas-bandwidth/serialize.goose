@@ -1,0 +1,3 @@
+// fuzz/differential.build -- serialize.c v1.11.2 at the pin, compiled from
+// .ref (gitignored) beside the C host that drives it.
+c_sources = ["host.c", "serialize.c"];
