@@ -77,7 +77,14 @@ fn wire_bits(wire: const u8[:], n: i64) -> u32 {
 // 5 object (the next n steps).
 struct SStep { kind: i64, n: i64, val: u64 }
 
-struct Seq { steps: SStep[16], start: i64, end: i64 }
+struct Seq { steps: SStep[16], start: i64, end: i64, check: bool }
+
+// serialize is the object's own overload, which serialize_object invokes
+// inline (STANDARD.md, object). It is the caller's function, in this module,
+// so the library-side generic can name it.
+fn serialize<S>(s: S&, seq: Seq&) -> bool {
+    return run_steps(s, seq, seq.start, seq.end, seq.check);
+}
 
 struct Rec {
     op: i64, // 1 bytes, 2 string, 3 wstring, 4 align, 5 object
@@ -143,7 +150,11 @@ recursive fn run_steps<S>(s: S&, seq: Seq&, start: i64, end: i64, check: bool) -
             }
             i += 1;
         } else if st.kind == 5 {
-            guard run_steps(s, seq, i + 1, i + 1 + st.n, check) else { return false; }
+            var child = seq;
+            child.start = i + 1;
+            child.end = i + 1 + st.n;
+            child.check = check;
+            guard serialize_object(s, child) else { return false; }
             i += 1 + st.n;
         } else {
             abort("conformance: unknown object step");
@@ -153,13 +164,13 @@ recursive fn run_steps<S>(s: S&, seq: Seq&, start: i64, end: i64, check: bool) -
 }
 
 fn run_object_record(rec: Rec&) -> bool {
-    var seq = Seq { steps: [SStep { kind: 0, n: 0, val: 0 }; 16], start: 0, end: rec.step_count };
+    var seq = Seq { steps: [SStep { kind: 0, n: 0, val: 0 }; 16], start: 0, end: rec.step_count, check: !rec.refused };
     assert(rec.step_count <= 16);
     for i in rec.step_count { seq.steps[i] = rec.steps[i]; }
 
     var padded: u8[256] = [0xFF; 256];
     var r = serialize_read_stream_init_padded(padded, rec.wire[0..rec.wire_len]);
-    let ok = run_steps(r, seq, 0, seq.end, !rec.refused);
+    let ok = serialize_object(r, seq);
     assert(ok == !rec.refused);
     if rec.refused {
         assert(serialize_error(r) != SERIALIZE_ERROR_NONE);
@@ -170,7 +181,7 @@ fn run_object_record(rec: Rec&) -> bool {
     if rec.canonical {
         var wbuf: u8[64] = [0xAA; 64];
         var w = serialize_write_stream_init(wbuf);
-        assert(run_steps(w, seq, 0, seq.end, true));
+        assert(serialize_object(w, seq));
         serialize_flush(w);
         assert(serialize_bits_processed(w) == rec.consumed);
         for i in rec.wire_len {
@@ -179,7 +190,7 @@ fn run_object_record(rec: Rec&) -> bool {
     }
 
     var m = serialize_measure_stream_init();
-    assert(run_steps(m, seq, 0, seq.end, true));
+    assert(serialize_object(m, seq));
     let least = if rec.measure_at_least > 0 { rec.measure_at_least } else { rec.consumed };
     assert(serialize_bits_processed(m) >= least);
     return true;
