@@ -102,7 +102,7 @@ fn TestGoldenWireFormat() {
     var wbuf: u8[256] = [0xAA; 256];
     var w = serialize_write_stream_init(wbuf);
     var failed: i64 = -1;
-    assert(conf_run_steps(w, base, 0, 28, false, false, failed));
+    assert(conf_run_steps(w, base, 0, 28, false, SAB_NONE, failed));
     serialize_flush(w);
     assert(serialize_bits_processed(w) == 891);
     assert(serialize_bytes_processed(w) == 112);
