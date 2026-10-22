@@ -454,3 +454,51 @@ fn TestSerializeFloatCompressedNonFiniteAborts() {
     var w = serialize_write_stream_init(buf);
     serialize_compressed_float(w, serialize_f32_from_bits(0x7F800000), 0.0, 1.0, 0.01);
 }
+
+// fixed's WRITER refuses a raw value outside [min,max] in Q form, latches
+// VALUE_OUT_OF_RANGE and writes nothing for that call (STANDARD.md, fixed;
+// DESIGN.md (a), The latched kinds). The corpus pins only the reader's
+// refusal, so this is the write side's witness, at every storage width and in
+// the zero-width (min == max) case. Q16.16, Q48.16, Q112.16 over [-2,2]: the
+// raw bounds are -131072 and 131072.
+fn TestSerializeFixedWriteRefusesOutOfRange() {
+    let lo_out = Int128 { lo: 0xFFFFFFFFFFFDFFFF, hi: 0xFFFFFFFFFFFFFFFF }; // -131073
+    for k in 6 {
+        var buf: u8[32] = [0; 32];
+        var w = serialize_write_stream_init(buf);
+        // The bounds themselves are accepted.
+        if k < 2 {
+            assert(serialize_fixed32(w, 131072, 16, 16, -2, 2));
+            assert(serialize_fixed32(w, -131072, 16, 16, -2, 2));
+        } else if k < 4 {
+            assert(serialize_fixed64(w, 131072, 48, 16, -2, 2));
+            assert(serialize_fixed64(w, -131072, 48, 16, -2, 2));
+        } else {
+            assert(serialize_fixed128(w, Int128 { lo: 131072, hi: 0 }, 112, 16, -2, 2));
+            assert(serialize_fixed128(w, Int128 { lo: 0xFFFFFFFFFFFE0000, hi: 0xFFFFFFFFFFFFFFFF }, 112, 16, -2, 2));
+        }
+        let before = serialize_bits_processed(w);
+        assert(before == 38); // two writes of 19 bits: span 262144
+        // One past each bound is refused.
+        var ok = true;
+        if k == 0 { ok = serialize_fixed32(w, 131073, 16, 16, -2, 2); }
+        if k == 1 { ok = serialize_fixed32(w, -131073, 16, 16, -2, 2); }
+        if k == 2 { ok = serialize_fixed64(w, 131073, 48, 16, -2, 2); }
+        if k == 3 { ok = serialize_fixed64(w, -131073, 48, 16, -2, 2); }
+        if k == 4 { ok = serialize_fixed128(w, Int128 { lo: 131073, hi: 0 }, 112, 16, -2, 2); }
+        if k == 5 { ok = serialize_fixed128(w, lo_out, 112, 16, -2, 2); }
+        assert(!ok);
+        assert(serialize_error(w) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+        assert(serialize_bits_processed(w) == before);
+        // Failure is terminal: an in-range write after it is refused too.
+        assert(!serialize_fixed32(w, 0, 16, 16, -2, 2));
+        assert(serialize_bits_processed(w) == before);
+    }
+    // Zero width (min == max): only the one value is writable, in no bits.
+    var zbuf: u8[8] = [0; 8];
+    var z = serialize_write_stream_init(zbuf);
+    assert(serialize_fixed32(z, 65536, 16, 16, 1, 1));
+    assert(serialize_bits_processed(z) == 0);
+    assert(!serialize_fixed32(z, 65537, 16, 16, 1, 1));
+    assert(serialize_error(z) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+}
