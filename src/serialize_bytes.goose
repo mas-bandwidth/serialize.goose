@@ -1,5 +1,6 @@
-// serialize_bytes.goose -- bytes, string and wstring (STANDARD.md, bytes,
-// string, wstring; DESIGN.md (a), (d), (e)). Strings are Goose's own: UTF-8
+// serialize_bytes.goose -- bytes and string (STANDARD.md, bytes, string;
+// DESIGN.md (a), (d), (e)). Format 2.0 removed wstring: text is UTF-8 and only
+// UTF-8. Strings are Goose's own: UTF-8
 // bytes. Writes take a const u8[:]; a string read takes any u8 builder
 // (u8[>..] or u8[..k]) by reference, cleared and filled only on success.
 // Card serialize-goose-strings fills this file.
@@ -119,9 +120,17 @@ fn serialize_bytes(s: MeasureStream&, data: const u8[:]) -> bool {
 
 // ---- string (STANDARD.md, string) -----------------------------------------
 
-// int(length, 0, buffer_size - 1), then the bytes, which align.
+// int(length, 0, buffer_size - 1), then the bytes, which align. The writer is
+// handed well-formed UTF-8 with no zero byte (aborts otherwise). The reader
+// checks the claimed length against the stream BEFORE it touches the
+// destination, then scans the whole payload for a zero byte (EMBEDDED_NUL)
+// before it validates the encoding (INVALID_UTF8), so a payload that breaks
+// both rules is EMBEDDED_NUL (STANDARD.md, string).
 fn serialize_string(s: WriteStream&, value: const u8[:], buffer_size: i64) -> bool {
     if value.len > buffer_size - 1 { abort("serialize: string length must fit buffer_size"); }
+    for i in value.len {
+        if value[i] == 0 { abort("serialize: string must not contain a zero byte"); }
+    }
     if !serialize_valid_utf8(value) { abort("serialize: string must be valid UTF-8"); }
     guard serialize_write_length(s, value.len, buffer_size) else { return false; }
     return serialize_bytes(s, value);
@@ -137,13 +146,15 @@ fn serialize_string<T>(s: ReadStream&, value: T&, buffer_size: i64) -> bool {
         return true;
     }
     guard serialize_align(s) else { return false; }
-    guard serialize_read_check(s, length * 8) else { return false; }
+    // The claimed length against the bytes left, in bytes: length * 8 could
+    // wrap for a huge buffer_size, the division cannot.
+    guard length <= serialize_bits_remaining(s) / 8 else { return serialize_fail(s, SERIALIZE_ERROR_PAST_END); }
     let start = s.bits_read >> 3;
     let payload = s.data[start..start + length];
     for i in length {
-        guard payload[i] != 0 else { return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE); }
+        guard payload[i] != 0 else { return serialize_fail(s, SERIALIZE_ERROR_EMBEDDED_NUL); }
     }
-    guard serialize_valid_utf8(payload) else { return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE); }
+    guard serialize_valid_utf8(payload) else { return serialize_fail(s, SERIALIZE_ERROR_INVALID_UTF8); }
     value.clear();
     for i in length {
         value.push(payload[i]);
@@ -156,147 +167,4 @@ fn serialize_string(s: MeasureStream&, value: const u8[:], buffer_size: i64) -> 
     if value.len > buffer_size - 1 { abort("serialize: string length must fit buffer_size"); }
     guard serialize_measure_length(s, buffer_size) else { return false; }
     return serialize_bytes(s, value);
-}
-
-// ---- wstring (STANDARD.md, wstring) ---------------------------------------
-
-fn serialize_utf8_unit_count(value: const u8[:]) -> i64 {
-    var i: i64 = 0;
-    var units: i64 = 0;
-    while i < value.len {
-        let lead = value[i];
-        if lead < 0x80 {
-            i += 1;
-            units += 1;
-        } else if (lead & 0xE0) == 0xC0 {
-            i += 2;
-            units += 1;
-        } else if (lead & 0xF0) == 0xE0 {
-            i += 3;
-            units += 1;
-        } else {
-            i += 4;
-            units += 2;
-        }
-    }
-    return units;
-}
-
-fn serialize_utf8_code_point(value: const u8[:], i: i64&) -> u32 {
-    let lead = value[i];
-    if lead < 0x80 {
-        i += 1;
-        return lead;
-    }
-    if (lead & 0xE0) == 0xC0 {
-        let cp = ((lead & 0x1F) as u32 << 6) | ((value[i + 1] & 0x3F) as u32);
-        i += 2;
-        return cp;
-    }
-    if (lead & 0xF0) == 0xE0 {
-        let cp = ((lead & 0x0F) as u32 << 12) | ((value[i + 1] & 0x3F) as u32 << 6)
-               | ((value[i + 2] & 0x3F) as u32);
-        i += 3;
-        return cp;
-    }
-    let cp = ((lead & 0x07) as u32 << 18) | ((value[i + 1] & 0x3F) as u32 << 12)
-           | ((value[i + 2] & 0x3F) as u32 << 6) | ((value[i + 3] & 0x3F) as u32);
-    i += 4;
-    return cp;
-}
-
-// int(units, 0, buffer_size - 1), then each UTF-16 code unit as a 32-bit
-// group, in order. NO align anywhere (STANDARD.md, wstring).
-fn serialize_wstring(s: WriteStream&, value: const u8[:], buffer_size: i64) -> bool {
-    if !serialize_valid_utf8(value) { abort("serialize: wstring must be valid UTF-8"); }
-    let units = serialize_utf8_unit_count(value);
-    if units > buffer_size - 1 { abort("serialize: wstring unit count must fit buffer_size"); }
-    guard serialize_write_length(s, units, buffer_size) else { return false; }
-    var i: i64 = 0;
-    while i < value.len {
-        let cp = serialize_utf8_code_point(value, i);
-        if cp >= 0x10000 {
-            let v = cp - 0x10000;
-            guard serialize_bits(s, 0xD800 + (v >> 10), 32) else { return false; }
-            guard serialize_bits(s, 0xDC00 + (v & 0x3FF), 32) else { return false; }
-        } else {
-            guard serialize_bits(s, cp, 32) else { return false; }
-        }
-    }
-    return true;
-}
-
-fn serialize_append_utf8<T>(value: T&, cp: u32) {
-    if cp < 0x80 {
-        value.push(cp as! u8);
-    } else if cp < 0x800 {
-        value.push((0xC0 | (cp >> 6)) as! u8);
-        value.push((0x80 | (cp & 0x3F)) as! u8);
-    } else if cp < 0x10000 {
-        value.push((0xE0 | (cp >> 12)) as! u8);
-        value.push((0x80 | ((cp >> 6) & 0x3F)) as! u8);
-        value.push((0x80 | (cp & 0x3F)) as! u8);
-    } else {
-        value.push((0xF0 | (cp >> 18)) as! u8);
-        value.push((0x80 | ((cp >> 12) & 0x3F)) as! u8);
-        value.push((0x80 | ((cp >> 6) & 0x3F)) as! u8);
-        value.push((0x80 | (cp & 0x3F)) as! u8);
-    }
-}
-
-// Validate the whole code-unit sequence before the destination is touched: no
-// zero group, no group above 0xFFFF, no unpaired surrogate (STANDARD.md,
-// wstring, Readers must refuse). A copy of the stream carries the peek.
-fn serialize_wstring_units_valid(s: ReadStream&, units: i64) -> bool {
-    var probe = s;
-    var pending = false;
-    for i in units {
-        var c: u32 = 0;
-        guard serialize_bits(probe, c, 32) else { return false; }
-        if c == 0 { return false; }
-        if c > 0xFFFF { return false; }
-        if pending {
-            if c < 0xDC00 || c > 0xDFFF { return false; }
-            pending = false;
-        } else if c >= 0xD800 && c <= 0xDBFF {
-            pending = true;
-        } else if c >= 0xDC00 && c <= 0xDFFF {
-            return false;
-        }
-    }
-    return !pending;
-}
-
-fn serialize_wstring<T>(s: ReadStream&, value: T&, buffer_size: i64) -> bool {
-    guard serialize_error(s) == SERIALIZE_ERROR_NONE else { return false; }
-    var units: i64 = 0;
-    guard serialize_read_length(s, units, buffer_size) else { return false; }
-    guard serialize_wstring_units_valid(s, units) else { return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE); }
-    value.clear();
-    var pending: u32 = 0;
-    var have_pending = false;
-    for i in units {
-        var c: u32 = 0;
-        assert(serialize_bits(s, c, 32));
-        if have_pending {
-            let cp = 0x10000 + ((pending - 0xD800) << 10) + (c - 0xDC00);
-            serialize_append_utf8(value, cp);
-            have_pending = false;
-        } else if c >= 0xD800 && c <= 0xDBFF {
-            pending = c;
-            have_pending = true;
-        } else {
-            serialize_append_utf8(value, c);
-        }
-    }
-    return true;
-}
-
-// The length field plus 32 bits per unit; NO align (STANDARD.md, wstring;
-// The Measure Stream).
-fn serialize_wstring(s: MeasureStream&, value: const u8[:], buffer_size: i64) -> bool {
-    let units = serialize_utf8_unit_count(value);
-    if units > buffer_size - 1 { abort("serialize: wstring unit count must fit buffer_size"); }
-    guard serialize_measure_length(s, buffer_size) else { return false; }
-    return serialize_measure_add(s, units * 32);
 }

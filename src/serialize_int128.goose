@@ -79,9 +79,9 @@ fn serialize_u128_group32(v: Uint128, i: i64) -> u32 {
     return (v.hi >> 32) as! u32;
 }
 fn serialize_u128_set_group32(v: Uint128&, i: i64, g: u32) {
-    if i == 0 { v.lo |= g as u64; }
+    if i == 0 { v.lo |= g; }
     else if i == 1 { v.lo |= (g as u64) << 32; }
-    else if i == 2 { v.hi |= g as u64; }
+    else if i == 2 { v.hi |= g; }
     else { v.hi |= (g as u64) << 32; }
 }
 
@@ -93,7 +93,7 @@ fn serialize_u128_write_bits(s: WriteStream&, value: Uint128, bits: i64) {
     while written < bits {
         var chunk = bits - written;
         if chunk > 32 { chunk = 32; }
-        let g: u64 = serialize_u128_group32(value, group) as u64;
+        let g: u64 = serialize_u128_group32(value, group);
         let mask: u64 = if chunk == 64 { 0xffffffffffffffff } else { ((1 as u64) << (chunk as u64)) - 1 };
         serialize_packer_write(s, g & mask, chunk);
         written += chunk;

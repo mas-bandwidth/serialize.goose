@@ -4,14 +4,15 @@
 
 ## The Goose port of serialize
 
-The Goose port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The families and the conformance runner are on main (PR #2, PR #3, 2026-10-22).
+The Goose port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The families and the conformance runner are on main (PR #2, PR #3, 2026-10-22); format 2.0 landed with PR #5 (2026-10-22).
 
 <!-- nova-work:port:start -->
 
 | feature | goose |
 |---|:---:|
 | Design, family stubs and test runner | ✅ |
-| STANDARD.md matches serialize v1.17.0 | ✅ |
+| STANDARD.md matches serialize v2.0.0 | ✅ |
+| Format 2.0: refusal reasons, finite floats, end, canonical int_relative, no wstring | ✅ |
 | Fleet CI workflow and its invariant test | ✅ |
 | 64-bit bitpacker and window reader | ✅ |
 | Ranged integers, int64, int128, uint128 and relative ints | ✅ |
@@ -19,10 +20,11 @@ The Goose port of serialize, the open-source bitpacking serializer: the same wir
 | Bytes, strings, wide strings, align and objects | ✅ |
 | Whole conformance corpus, byte for byte with serialize.c | ✅ |
 | Reversed witnesses: each deleted refusal rule turns the suite red | ✅ |
+| Negative controls: each deleted rule fails exactly its conformance-controls list | ✅ |
 | Differential fuzzing against serialize.c | ❌ |
 | Benchmark against serialize.c, C++ serialize and serialize.rs | ❌ |
 | Goose vs C++ vs Rust (and Lobster) benchmark report | ❌ |
-| complete | 75% |
+| complete | 78% |
 
 [Source data](docs/roadmap.sexp)
 

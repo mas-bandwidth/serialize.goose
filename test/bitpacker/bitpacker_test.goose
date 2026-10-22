@@ -69,14 +69,14 @@ fn test_golden_sequence() {
     assert(serialize_bits_remaining(r) == 4);
 
     // 4 trailing bits remain in the 10-byte stream; reading 4 bits succeeds,
-    // reading 1 more refuses with Overflow.
+    // reading 1 more refuses with PAST_END.
     var tail: u32 = 99;
     assert(serialize_bits(r, tail, 4) && tail == 0);
     assert(serialize_bits_remaining(r) == 0);
     var past: u32 = 77;
     assert(!serialize_bits(r, past, 1));
     assert(past == 77);
-    assert(serialize_error(r) == SERIALIZE_ERROR_OVERFLOW);
+    assert(serialize_error(r) == SERIALIZE_ERROR_PAST_END);
 }
 
 fn test_oracle_and_round_trip() {
@@ -315,10 +315,10 @@ fn test_read_latch_over_valid_data() {
     assert(serialize_bits_processed(r2) == 1);
     assert(serialize_bits_remaining(r2) == 127);
 
-    // Byte 0 is 0xFF, so bits 1..7 are 1s -> serialize_align refuses with Align
+    // Byte 0 is 0xFF, so bits 1..7 are 1s -> serialize_align refuses with NONZERO_PADDING
     // while 120 valid bits (bytes 1..15) remain in the stream.
     assert(!serialize_align(r2));
-    assert(serialize_error(r2) == SERIALIZE_ERROR_ALIGN);
+    assert(serialize_error(r2) == SERIALIZE_ERROR_NONZERO_PADDING);
     assert(serialize_bits_processed(r2) == 8);
     assert(serialize_bits_remaining(r2) == 120);
 
@@ -333,7 +333,7 @@ fn test_read_latch_over_valid_data() {
     assert(!serialize_align(r2));
     assert(serialize_bits_processed(r2) == 8);
     assert(serialize_bits_remaining(r2) == 120);
-    assert(serialize_error(r2) == SERIALIZE_ERROR_ALIGN);
+    assert(serialize_error(r2) == SERIALIZE_ERROR_NONZERO_PADDING);
 }
 
 fn test_write_refusals_and_latch() {
@@ -357,12 +357,12 @@ fn test_write_refusals_and_latch() {
     assert(serialize_error(w64) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
     assert(serialize_bits_processed(w64) == 0);
 
-    // Write overflow latches Overflow and writes nothing for the overflowing call.
+    // Write overflow latches PAST_END and writes nothing for the overflowing call.
     var w_ovf = serialize_write_stream_init(buf);
     assert(serialize_uint64(w_ovf, 0xFFEEDDCCBBAA9988));
     assert(serialize_bits_available(w_ovf) == 0);
     assert(!serialize_bool(w_ovf, true));
-    assert(serialize_error(w_ovf) == SERIALIZE_ERROR_OVERFLOW);
+    assert(serialize_error(w_ovf) == SERIALIZE_ERROR_PAST_END);
     assert(serialize_bits_processed(w_ovf) == 64);
 }
 
@@ -431,6 +431,7 @@ struct VectorRecord {
     param_bits: i64,
     param_preceding_bits: i64,
     refused: bool,
+    reason: i32,
     expect_u64: u64,
     expect_bool: bool,
     consumed: i64,
@@ -453,7 +454,7 @@ fn run_vector_record(rec: VectorRecord&) -> i64 {
         };
         if rec.refused {
             assert(!ok);
-            assert(serialize_error(r) != SERIALIZE_ERROR_NONE);
+            assert(serialize_error(r) == rec.reason);
             if rec.param_bits <= 32 {
                 assert(got32 == 0xDEADBEEF);
             } else {
@@ -490,6 +491,7 @@ fn run_vector_record(rec: VectorRecord&) -> i64 {
         if rec.refused {
             assert(!ok);
             assert(got == !rec.expect_bool);
+            assert(serialize_error(r) == rec.reason);
         } else {
             assert(ok);
             assert(got == rec.expect_bool);
@@ -517,7 +519,7 @@ fn run_vector_record(rec: VectorRecord&) -> i64 {
         let ok = serialize_align(r);
         if rec.refused {
             assert(!ok);
-            assert(serialize_error(r) == SERIALIZE_ERROR_ALIGN);
+            assert(serialize_error(r) == rec.reason);
         } else {
             assert(ok);
             assert(serialize_bits_processed(r) == rec.consumed);
@@ -542,6 +544,16 @@ fn run_vector_record(rec: VectorRecord&) -> i64 {
     abort("conformance: unknown operation in bitpacker vector file");
 }
 
+// The reason a refused record states, from the closed list (STANDARD.md,
+// Refusal reasons); a missing or unknown reason is a malformed vector.
+fn vector_reason(name: const u8[:]) -> i32 {
+    for k in 8 {
+        let kind = (k + 1) as! i32;
+        if slice_equals(name, serialize_refusal_name(kind)) { return kind; }
+    }
+    abort("conformance: refused record states no known reason");
+}
+
 fn run_conformance_file(filename: const u8[:]) -> i64 {
     var content: u8[>..] = [];
     assert(read_file(filename, content));
@@ -551,6 +563,7 @@ fn run_conformance_file(filename: const u8[:]) -> i64 {
         param_bits: 0,
         param_preceding_bits: 0,
         refused: false,
+        reason: SERIALIZE_ERROR_NONE,
         expect_u64: 0,
         expect_bool: false,
         consumed: 0,
@@ -571,6 +584,7 @@ fn run_conformance_file(filename: const u8[:]) -> i64 {
                 rec.param_preceding_bits = 0;
                 rec.wire.clear();
                 rec.refused = false;
+                rec.reason = SERIALIZE_ERROR_NONE;
                 rec.expect_u64 = 0;
                 rec.expect_bool = false;
                 rec.consumed = 0;
@@ -596,8 +610,9 @@ fn run_conformance_file(filename: const u8[:]) -> i64 {
                     rec.wire.clear();
                 } else if slice_starts_with(line, "bytes ") {
                     parse_hex_bytes(line[6..], rec.wire);
-                } else if slice_equals(line, "expect refused") {
+                } else if slice_starts_with(line, "expect refused ") {
                     rec.refused = true;
+                    rec.reason = vector_reason(line[15..]);
                 } else if slice_starts_with(line, "expect value = ") {
                     let val_str = line[15..];
                     if slice_equals(val_str, "true") {
@@ -630,7 +645,7 @@ fn TestBitpacker() {
     let n_bits = run_conformance_file("bits.txt");
     let n_bool = run_conformance_file("bool.txt");
     let n_align = run_conformance_file("align.txt");
-    assert(n_bits == 20);
+    assert(n_bits == 26);
     assert(n_bool == 5);
     assert(n_align == 10);
 }
