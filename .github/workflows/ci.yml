@@ -35,6 +35,9 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Reversed witnesses (each deleted rule turns the suite red)
+        run: make witnesses
+
       - name: Fuzz
         run: if [ -f make/fuzz.mk ]; then make fuzz; fi
 
