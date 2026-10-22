@@ -1,8 +1,16 @@
 // test/conformance -- TestConformanceCorpus (STANDARD.md, The vector format,
 // What a runner checks, A gate nobody has seen go red; DESIGN.md (g) THE
 // RUNNER). Every conformance/*.txt file is discovered, every record in it is
-// run through the reader, and a writer=canonical record is re-emitted byte for
-// byte. A record whose operation has no runner is a failure, never a skip.
+// run through the reader, every refusal is held to the reason its record
+// states, a writer=canonical record is re-emitted byte for byte, and a
+// writer_input record's input is written and held to the record's bytes. A
+// record whose operation has no runner is a failure, never a skip.
+//
+// A failing vector does not abort the run: it is printed as
+// `FAIL <name>: <why>` and collected, so a control (tools/controls.sh) can
+// require a sabotaged reader to fail EXACTLY the vectors its
+// conformance-controls/<rule>.expected names (conf_control_main). A malformed
+// vector (an unknown operation, parameter, line or reason) still aborts.
 
 import os;
 import std;
@@ -10,7 +18,6 @@ import .serialize;
 
 let CONF_MAX_STEPS = 64;
 let CONF_MAX_BYTES = 256;
-let CONF_MAX_UNITS = 128;
 
 // Step kinds (STANDARD.md, The vector format; sequence.txt's one spelling per
 // operation).
@@ -27,7 +34,7 @@ let K_DOUBLE = 10;
 let K_COMPRESSED_FLOAT = 11;
 let K_BYTES = 12;
 let K_STRING = 13;
-let K_WSTRING = 14;
+let K_END = 14;
 let K_FIXED = 15;
 let K_OBJECT = 16;
 let K_SEQUENCE = 17;
@@ -48,7 +55,7 @@ fn conf_operation(text: const u8[:]) -> i64 {
     if conf_equals(text, "compressed_float") { return K_COMPRESSED_FLOAT; }
     if conf_equals(text, "bytes") { return K_BYTES; }
     if conf_equals(text, "string") { return K_STRING; }
-    if conf_equals(text, "wstring") { return K_WSTRING; }
+    if conf_equals(text, "end") { return K_END; }
     if conf_equals(text, "fixed") { return K_FIXED; }
     if conf_equals(text, "sequence") { return K_SEQUENCE; }
     return 0;
@@ -90,7 +97,7 @@ fn conf_parse_hex_u64(s: const u8[:]) -> u64 {
     var i: i64 = 0;
     if s.len > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') { i = 2; }
     while i < s.len {
-        v = (v << 4) | (conf_hex_digit(s[i]) as u64);
+        v = (v << 4) | conf_hex_digit(s[i]);
         i += 1;
     }
     return v;
@@ -141,13 +148,13 @@ fn conf_parse_number(s: const u8[:]) -> Int128 {
         i += 2;
         while i < s.len {
             v = Int128 { lo: v.lo << 4, hi: (v.hi << 4) | (v.lo >> 60) };
-            v = conf_u128_add(v, Int128 { lo: conf_hex_digit(s[i]) as u64, hi: 0 });
+            v = conf_u128_add(v, Int128 { lo: conf_hex_digit(s[i]), hi: 0 });
             i += 1;
         }
     } else {
         while i < s.len {
             assert(s[i] >= '0' && s[i] <= '9');
-            v = conf_u128_mul10_add(v, (s[i] - '0') as u64);
+            v = conf_u128_mul10_add(v, s[i] - '0');
             i += 1;
         }
     }
@@ -195,8 +202,6 @@ struct Step {
     input_len: i64,
     got_buf: u8[1024],
     got_len: i64,
-    want_units: u32[128],
-    want_unit_count: i64,
 }
 
 fn conf_empty_step() -> Step {
@@ -205,7 +210,7 @@ fn conf_empty_step() -> Step {
         fmin: 0.0, fmax: 0.0, fres: 0.0, integer_bits: 0, fraction_bits: 0, storage: 0,
         previous: 0, want: Int128 { lo: 0, hi: 0 }, got: Int128 { lo: 0, hi: 0 },
         want_bool: false, got_bool: false, input: [0; 1024], input_len: 0,
-        got_buf: [0; 1024], got_len: 0, want_units: [0; 128], want_unit_count: 0,
+        got_buf: [0; 1024], got_len: 0,
     };
 }
 
@@ -228,7 +233,6 @@ fn conf_step_clear(st: Step&) {
     st.got_bool = false;
     st.input_len = 0;
     st.got_len = 0;
-    st.want_unit_count = 0;
 }
 
 fn conf_split_words(text: const u8[:], words: u8[1024]&, ends: i64[8]&) -> i64 {
@@ -308,10 +312,7 @@ fn conf_step_from_words(st: Step&, text: const u8[:]) -> bool {
         st.kind = K_STRING; st.width = conf_parse_dec(conf_word(words, ends, 1));
         return st.width > 0 && st.width <= CONF_MAX_BYTES;
     }
-    if conf_equals(w0, "wstring") && n == 2 {
-        st.kind = K_WSTRING; st.width = conf_parse_dec(conf_word(words, ends, 1));
-        return st.width > 0 && st.width <= CONF_MAX_BYTES;
-    }
+    if conf_equals(w0, "end") && n == 1 { st.kind = K_END; return true; }
     if (conf_equals(w0, "int") || conf_equals(w0, "int64") || conf_equals(w0, "int128")) && n == 3 {
         st.kind = if conf_equals(w0, "int") { K_INT }
                   else if conf_equals(w0, "int64") { K_INT64 } else { K_INT128 };
@@ -346,47 +347,6 @@ fn conf_read_align(s: ReadStream&, sabotage: i64) -> bool {
     return serialize_bits(s, ignored, n);
 }
 
-fn conf_append_utf8(out: u8[1024]&, len: i64&, cp: u32) {
-    if cp < 0x80 {
-        out[len] = cp as! u8; len += 1;
-    } else if cp < 0x800 {
-        out[len] = (0xC0 | (cp >> 6)) as! u8;
-        out[len + 1] = (0x80 | (cp & 0x3F)) as! u8;
-        len += 2;
-    } else if cp < 0x10000 {
-        out[len] = (0xE0 | (cp >> 12)) as! u8;
-        out[len + 1] = (0x80 | ((cp >> 6) & 0x3F)) as! u8;
-        out[len + 2] = (0x80 | (cp & 0x3F)) as! u8;
-        len += 3;
-    } else {
-        out[len] = (0xF0 | (cp >> 18)) as! u8;
-        out[len + 1] = (0x80 | ((cp >> 12) & 0x3F)) as! u8;
-        out[len + 2] = (0x80 | ((cp >> 6) & 0x3F)) as! u8;
-        out[len + 3] = (0x80 | (cp & 0x3F)) as! u8;
-        len += 4;
-    }
-}
-
-// The corpus states a wstring as transmitted UTF-16 code units; this turns
-// them back into the UTF-8 the Goose reader returns (STANDARD.md, wstring).
-fn conf_units_to_utf8(st: Step&, out: u8[1024]&) -> i64 {
-    var len: i64 = 0;
-    var i: i64 = 0;
-    while i < st.want_unit_count {
-        let c = st.want_units[i];
-        if c >= 0xD800 && c <= 0xDBFF {
-            assert(i + 1 < st.want_unit_count);
-            let lo = st.want_units[i + 1];
-            conf_append_utf8(out, len, 0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00));
-            i += 2;
-        } else {
-            conf_append_utf8(out, len, c);
-            i += 1;
-        }
-    }
-    return len;
-}
-
 // SAB_INT_RANGE's reader: serialize_int with the range refusal deleted and
 // nothing else changed (the width rule and the past-end refusal still hold).
 fn conf_read_int_unchecked(s: ReadStream&, value: i32&, min: i32, max: i32) -> bool {
@@ -403,7 +363,7 @@ fn conf_read_step(s: ReadStream&, st: Step&, check: bool, sabotage: i64) -> bool
         if st.width <= 32 {
             var v: u32 = 0xDEADBEEF;
             guard serialize_bits(s, v, st.width) else { return false; }
-            st.got = Int128 { lo: v as u64, hi: 0 };
+            st.got = Int128 { lo: v, hi: 0 };
         } else {
             var v: u64 = 0xDEADBEEFCAFEBABE;
             guard serialize_bits64(s, v, st.width) else { return false; }
@@ -455,7 +415,7 @@ fn conf_read_step(s: ReadStream&, st: Step&, check: bool, sabotage: i64) -> bool
     if st.kind == K_FLOAT {
         var v: f32 = 0.0;
         guard serialize_float(s, v) else { return false; }
-        st.got = Int128 { lo: serialize_f32_bits(v) as u64, hi: 0 };
+        st.got = Int128 { lo: serialize_f32_bits(v), hi: 0 };
         return !check || conf_same(st.want, st.got);
     }
     if st.kind == K_DOUBLE {
@@ -467,7 +427,7 @@ fn conf_read_step(s: ReadStream&, st: Step&, check: bool, sabotage: i64) -> bool
     if st.kind == K_COMPRESSED_FLOAT {
         var v: f32 = 0.0;
         guard serialize_compressed_float(s, v, st.fmin, st.fmax, st.fres) else { return false; }
-        st.got = Int128 { lo: serialize_f32_bits(v) as u64, hi: 0 };
+        st.got = Int128 { lo: serialize_f32_bits(v), hi: 0 };
         return !check || conf_same(st.want, st.got);
     }
     if st.kind == K_BYTES {
@@ -484,16 +444,7 @@ fn conf_read_step(s: ReadStream&, st: Step&, check: bool, sabotage: i64) -> bool
         for i in out.len { st.got_buf[i] = out[i]; }
         return !check || conf_same_bytes(st, st.input, st.input_len);
     }
-    if st.kind == K_WSTRING {
-        var out: u8[>..] = [];
-        guard serialize_wstring(s, out, st.width) else { return false; }
-        st.got_len = out.len;
-        for i in out.len { st.got_buf[i] = out[i]; }
-        if !check { return true; }
-        var want: u8[1024] = [0; 1024];
-        let want_len = conf_units_to_utf8(st, want);
-        return conf_same_bytes(st, want, want_len);
-    }
+    if st.kind == K_END { return serialize_end(s); }
     if st.kind == K_FIXED {
         if st.storage == 32 {
             var v: i32 = 0x1234567;
@@ -555,7 +506,7 @@ fn conf_write_step(s: WriteStream&, st: Step&) -> bool {
     }
     if st.kind == K_BYTES { return serialize_bytes(s, st.got_buf[0..st.got_len]); }
     if st.kind == K_STRING { return serialize_string(s, st.got_buf[0..st.got_len], st.width); }
-    if st.kind == K_WSTRING { return serialize_wstring(s, st.got_buf[0..st.got_len], st.width); }
+    if st.kind == K_END { return serialize_end(s); }
     if st.kind == K_FIXED {
         if st.storage == 32 {
             return serialize_fixed32(s, st.got.lo as! i32, st.integer_bits, st.fraction_bits,
@@ -601,7 +552,7 @@ fn conf_measure_step(s: MeasureStream&, st: Step&) -> bool {
     }
     if st.kind == K_BYTES { return serialize_bytes(s, st.got_buf[0..st.got_len]); }
     if st.kind == K_STRING { return serialize_string(s, st.got_buf[0..st.got_len], st.width); }
-    if st.kind == K_WSTRING { return serialize_wstring(s, st.got_buf[0..st.got_len], st.width); }
+    if st.kind == K_END { return serialize_end(s); }
     if st.kind == K_FIXED {
         if st.storage == 32 {
             return serialize_fixed32(s, st.got.lo as! i32, st.integer_bits, st.fraction_bits,
@@ -669,7 +620,12 @@ struct Rec {
     fmax: f32,
     fres: f32,
     refused: bool,
+    reason: i32,
     canonical: bool,
+    has_writer_input: bool,
+    writer_input: u32,
+    name: u8[256],
+    name_len: i64,
     consumed: i64,
     measure_at_least: i64,
     has_expect: bool,
@@ -698,7 +654,11 @@ fn conf_rec_reset(rec: Rec&) {
     rec.fmax = 0.0;
     rec.fres = 0.0;
     rec.refused = false;
+    rec.reason = SERIALIZE_ERROR_NONE;
     rec.canonical = false;
+    rec.has_writer_input = false;
+    rec.writer_input = 0;
+    rec.name_len = 0;
     rec.consumed = 0;
     rec.measure_at_least = 0;
     rec.has_expect = false;
@@ -713,7 +673,7 @@ fn conf_param_takes(op: i64, name: const u8[:]) -> bool {
     if conf_equals(name, "preceding_bits") { return op == K_ALIGN || op == K_BYTES; }
     if conf_equals(name, "bits") { return op == K_BITS; }
     if conf_equals(name, "count") { return op == K_BYTES; }
-    if conf_equals(name, "buffer_size") { return op == K_STRING || op == K_WSTRING; }
+    if conf_equals(name, "buffer_size") { return op == K_STRING; }
     if conf_equals(name, "previous") { return op == K_INT_RELATIVE; }
     if conf_equals(name, "res") { return op == K_COMPRESSED_FLOAT; }
     if conf_equals(name, "integer_bits") || conf_equals(name, "fraction_bits") { return op == K_FIXED; }
@@ -801,9 +761,11 @@ fn conf_build_steps(rec: Rec&) -> bool {
     } else if rec.op == K_BYTES {
         if rec.count < 0 || rec.count > CONF_MAX_BYTES { return false; }
         rec.steps[n].kind = K_BYTES; rec.steps[n].width = rec.count;
-    } else if rec.op == K_STRING || rec.op == K_WSTRING {
+    } else if rec.op == K_STRING {
         if rec.buffer_size < 1 || rec.buffer_size > CONF_MAX_BYTES { return false; }
-        rec.steps[n].kind = rec.op; rec.steps[n].width = rec.buffer_size;
+        rec.steps[n].kind = K_STRING; rec.steps[n].width = rec.buffer_size;
+    } else if rec.op == K_END {
+        rec.steps[n].kind = K_END;
     } else if rec.op == K_FIXED {
         rec.steps[n].kind = K_FIXED;
         if !conf_fixed_decl(rec.steps[n], rec.integer_bits, rec.fraction_bits, rec.min, rec.max) { return false; }
@@ -822,27 +784,7 @@ fn conf_assign_expect(st: Step&, token: const u8[:]) {
         st.input_len = conf_parse_hex_bytes(token, st.input);
         return;
     }
-    if st.kind == K_WSTRING {
-        st.want_unit_count = 0;
-        var start: i64 = 0;
-        var i: i64 = 0;
-        while i <= token.len {
-            if i == token.len || token[i] == ' ' {
-                if i > start {
-                    assert(i - start == 4);
-                    var u: u32 = 0;
-                    for k in 4 { u = (u << 4) | (conf_hex_digit(token[start + k]) as u32); }
-                    assert(st.want_unit_count < CONF_MAX_UNITS);
-                    st.want_units[st.want_unit_count] = u;
-                    st.want_unit_count += 1;
-                }
-                start = i + 1;
-            }
-            i += 1;
-        }
-        return;
-    }
-    if st.kind == K_ALIGN || st.kind == K_OBJECT { return; }
+    if st.kind == K_ALIGN || st.kind == K_END || st.kind == K_OBJECT { return; }
     st.want = conf_parse_number(token);
 }
 
@@ -882,15 +824,28 @@ fn conf_parse_line(rec: Rec&, line: const u8[:]) {
         rec.has_op = true;
         if rec.op == 0 { rec.bad = true; }
     } else if conf_starts(line, "name ") {
-        return;
+        let name = line[5..];
+        if name.len == 0 || name.len > 256 { rec.bad = true; return; }
+        for i in name.len { rec.name[i] = name[i]; }
+        rec.name_len = name.len;
     } else if conf_starts(line, "param ") {
         conf_parse_param(rec, line[6..]);
     } else if conf_equals(line, "bytes") {
         rec.wire_len = 0;
     } else if conf_starts(line, "bytes ") {
         rec.wire_len = conf_parse_hex_bytes(line[6..], rec.wire);
-    } else if conf_equals(line, "expect refused") {
+    } else if conf_starts(line, "expect refused ") {
+        // The reason is required and comes from the closed list; a missing
+        // or unknown one makes the vector malformed (STANDARD.md, Refusal
+        // reasons; The vector format).
         rec.refused = true;
+        rec.reason = conf_reason(line[15..]);
+        if rec.reason == SERIALIZE_ERROR_NONE { rec.bad = true; }
+    } else if conf_starts(line, "writer_input bits = 0x") {
+        // A float32 pattern a writer is handed (compressed_float only).
+        if rec.op != K_COMPRESSED_FLOAT || line.len - 22 < 1 || line.len - 22 > 8 { rec.bad = true; return; }
+        rec.has_writer_input = true;
+        rec.writer_input = conf_parse_hex_u64(line[20..]) as! u32;
     } else if conf_equals(line, "expect value =") || conf_equals(line, "expect bits =") {
         rec.has_expect = true;
         rec.expect_len = 0;
@@ -913,22 +868,131 @@ fn conf_parse_line(rec: Rec&, line: const u8[:]) {
     }
 }
 
+// The reason a refused record states, from the closed list (STANDARD.md,
+// Refusal reasons); NONE when it names none of them.
+fn conf_reason(name: const u8[:]) -> i32 {
+    for k in 8 {
+        let kind = (k + 1) as! i32;
+        if conf_equals(name, serialize_refusal_name(kind)) { return kind; }
+    }
+    return SERIALIZE_ERROR_NONE;
+}
+
+fn conf_new_rec() -> Rec {
+    return Rec {
+        op: 0, has_op: false, preceding: 0, width: 0, count: 0, buffer_size: 0,
+        integer_bits: 0, fraction_bits: 0, previous: 0,
+        min: Int128 { lo: 0, hi: 0 }, max: Int128 { lo: 0, hi: 0 },
+        fmin: 0.0, fmax: 0.0, fres: 0.0, refused: false, reason: SERIALIZE_ERROR_NONE,
+        canonical: false, has_writer_input: false, writer_input: 0, name: [0; 256], name_len: 0,
+        consumed: 0, measure_at_least: 0, has_expect: false,
+        expect_text: [0; 1024], expect_len: 0, bad: false,
+        wire: [0; 1024], wire_len: 0,
+        steps: [conf_empty_step(); 64], step_count: 0,
+    };
+}
+
+// ---- the verdict -----------------------------------------------------------
+
+// What a run found: the records run, the names of the vectors that failed,
+// one per line in corpus order, and every name run (for uniqueness).
+let CONF_MAX_FAILED = 32768;
+
+struct Tally {
+    records: i64,
+    failures: i64,
+    failed_buf: u8[32768],
+    failed_len: i64,
+    names: u8[>..],
+}
+
+fn conf_new_tally() -> Tally {
+    return Tally { records: 0, failures: 0, failed_buf: [0; 32768], failed_len: 0, names: [] };
+}
+
+fn conf_failed(tally: Tally&) -> const u8[:] { return tally.failed_buf[0..tally.failed_len]; }
+
+// Records one failing vector, printing why. Always returns false, so a check
+// can `return conf_fail(...)`.
+fn conf_fail(rec: Rec&, tally: Tally&, why: const u8[:]) -> bool {
+    let name = rec.name[0..rec.name_len];
+    print("FAIL ", name, ": ", why);
+    tally.failures += 1;
+    assert(tally.failed_len + name.len + 1 <= CONF_MAX_FAILED);
+    for i in name.len { tally.failed_buf[tally.failed_len + i] = name[i]; }
+    tally.failed_buf[tally.failed_len + name.len] = '\n';
+    tally.failed_len += name.len + 1;
+    return false;
+}
+
+// True when `name` is a line of the newline-separated list.
+fn conf_list_holds(list: const u8[:], name: const u8[:]) -> bool {
+    var start: i64 = 0;
+    for i in list.len {
+        if list[i] == '\n' {
+            if conf_equals(list[start..i], name) { return true; }
+            start = i + 1;
+        }
+    }
+    return false;
+}
+
 // A refused read must leave the scalar destination alone and the stream
 // terminal; terminality is checked by behavior, not an accessor (STANDARD.md,
 // What a runner checks).
-fn conf_check_terminal(s: ReadStream&) {
+fn conf_is_terminal(s: ReadStream&) -> bool {
+    let before = serialize_bits_processed(s);
     var probe: u32 = 0xFFFFFFFF;
-    assert(!serialize_bits(s, probe, 8));
-    assert(probe == 0xFFFFFFFF);
-    assert(serialize_error(s) != SERIALIZE_ERROR_NONE);
+    if serialize_bits(s, probe, 8) { return false; }
+    if probe != 0xFFFFFFFF { return false; }
+    if serialize_bits_processed(s) != before { return false; }
+    return serialize_error(s) != SERIALIZE_ERROR_NONE;
 }
 
-fn conf_run_record(rec: Rec&, sabotage: i64, sabotage_hits: i64&) -> i64 {
-    if !rec.has_op { return 0; }
+// The writer half of a writer_input record: the input float handed to the
+// writer must emit exactly the record's bytes (STANDARD.md, What a runner
+// checks). It runs on refused records too.
+fn conf_check_writer_input(rec: Rec&, tally: Tally&) -> bool {
+    var wbuf: u8[2048] = [0xAA; 2048];
+    var w = serialize_write_stream_init(wbuf);
+    let input = serialize_f32_from_bits(rec.writer_input);
+    guard serialize_compressed_float(w, input, rec.fmin, rec.fmax, rec.fres) else {
+        return conf_fail(rec, tally, "the writer refused the writer_input");
+    }
+    serialize_flush(w);
+    guard serialize_bytes_processed(w) == rec.wire_len else {
+        return conf_fail(rec, tally, "the writer_input wrote a different byte count");
+    }
+    for i in rec.wire_len {
+        guard wbuf[i] == rec.wire[i] else { return conf_fail(rec, tally, "the writer_input wrote different bytes"); }
+    }
+    return true;
+}
+
+// Runs one record. A malformed record aborts; a failing one is recorded in
+// the tally and the run goes on.
+fn conf_run_record(rec: Rec&, sabotage: i64, tally: Tally&) -> bool {
+    if !rec.has_op { return true; }
     if rec.bad { abort("conformance: no runner for this operation, parameter, or fixed declaration"); }
+    if rec.name_len == 0 { abort("conformance: a record has no name"); }
     if !conf_build_steps(rec) { abort("conformance: no runner for this vector"); }
+    if !rec.refused && !rec.has_expect { abort("conformance: a record states neither a value nor a refusal"); }
     conf_parse_expectations(rec);
 
+    // Names are unique across the corpus (STANDARD.md, The vector format).
+    let name = rec.name[0..rec.name_len];
+    if conf_list_holds(tally.names, name) { abort("conformance: a vector name is not unique across the corpus"); }
+    for i in name.len { tally.names.push(name[i]); }
+    tally.names.push('\n');
+    tally.records += 1;
+
+    if rec.has_writer_input {
+        guard conf_check_writer_input(rec, tally) else { return false; }
+    }
+
+    // The slack past the stream is a non-zero pattern, so a decode that
+    // depends on memory past the end cannot pass by reading zeros
+    // (STANDARD.md, The vector format).
     var padded: u8[2048] = [0xFF; 2048];
     for i in rec.wire_len { padded[i] = rec.wire[i]; }
     var r = serialize_read_stream_init_padded(padded, rec.wire[0..rec.wire_len]);
@@ -945,73 +1009,80 @@ fn conf_run_record(rec: Rec&, sabotage: i64, sabotage_hits: i64&) -> i64 {
     let ok = conf_run_steps(r, rec.steps, 0, rec.step_count, !rec.refused, sabotage, failed);
 
     if rec.refused {
-        if sabotage != SAB_NONE {
-            if ok { sabotage_hits += 1; return 1; }
-            return 1;
+        guard !ok else { return conf_fail(rec, tally, "accepted a stream the vector refuses"); }
+        // The FIRST refusal's reason, the one the vector states (STANDARD.md,
+        // Refusal reasons).
+        let got = serialize_error(r);
+        guard got == rec.reason else {
+            print("    refused as ", serialize_refusal_name(got), ", the vector states ", serialize_refusal_name(rec.reason));
+            return conf_fail(rec, tally, "refused for the wrong reason");
         }
-        assert(!ok);
         if failed >= 0 {
             let st = rec.steps[failed];
             if conf_is_pattern(st.kind) || conf_is_number(st.kind) {
-                assert(st.got.lo == 0xCAFEF00D && st.got.hi == 0);
+                guard st.got.lo == 0xCAFEF00D && st.got.hi == 0 else {
+                    return conf_fail(rec, tally, "a refused read wrote its destination");
+                }
             } else if st.kind == K_BOOL {
-                assert(st.got_bool);
+                guard st.got_bool else { return conf_fail(rec, tally, "a refused read wrote its destination"); }
             }
             // every later step must refuse too, even where bytes remain
             var j = failed + 1;
             while j < rec.step_count {
                 var inner: i64 = -1;
-                if rec.steps[j].kind == K_OBJECT {
-                    assert(!conf_run_steps(r, rec.steps, j, j + 1 + rec.steps[j].width, false, sabotage, inner));
-                    j += 1 + rec.steps[j].width;
-                } else {
-                    assert(!conf_run_steps(r, rec.steps, j, j + 1, false, sabotage, inner));
-                    j += 1;
+                let width = if rec.steps[j].kind == K_OBJECT { 1 + rec.steps[j].width } else { 1 };
+                guard !conf_run_steps(r, rec.steps, j, j + width, false, sabotage, inner) else {
+                    return conf_fail(rec, tally, "a step after the refusal was accepted");
                 }
+                j += width;
             }
         }
-        conf_check_terminal(r);
-        return 1;
+        guard conf_is_terminal(r) else { return conf_fail(rec, tally, "the refused stream is not terminal"); }
+        guard serialize_error(r) == rec.reason else { return conf_fail(rec, tally, "an echo replaced the first reason"); }
+        return true;
     }
 
-    assert(ok);
-    assert(serialize_bits_processed(r) == rec.consumed);
+    guard ok else {
+        print("    refused as ", serialize_refusal_name(serialize_error(r)), " at step ", failed);
+        return conf_fail(rec, tally, "refused or misread a stream the vector accepts");
+    }
+    guard serialize_bits_processed(r) == rec.consumed else { return conf_fail(rec, tally, "consumed a different bit count"); }
 
     if rec.canonical {
+        // The writer emits the same bytes. An end writes nothing, so the
+        // writer's bit count is the object's, and its byte count is the
+        // record's (STANDARD.md, end).
         var wbuf: u8[2048] = [0xAA; 2048];
         var w = serialize_write_stream_init(wbuf);
         var inner: i64 = -1;
-        assert(conf_run_steps(w, rec.steps, 0, rec.step_count, false, sabotage, inner));
+        guard conf_run_steps(w, rec.steps, 0, rec.step_count, false, sabotage, inner) else {
+            return conf_fail(rec, tally, "the writer refused the decoded value");
+        }
         serialize_flush(w);
-        assert(serialize_bits_processed(w) == rec.consumed);
-        assert(serialize_bytes_processed(w) == rec.wire_len);
-        for i in rec.wire_len { assert(wbuf[i] == rec.wire[i]); }
+        guard serialize_bytes_processed(w) == rec.wire_len else { return conf_fail(rec, tally, "the writer wrote a different byte count"); }
+        guard serialize_bits_processed(w) <= rec.consumed else { return conf_fail(rec, tally, "the writer wrote more bits than were read"); }
+        for i in rec.wire_len {
+            guard wbuf[i] == rec.wire[i] else { return conf_fail(rec, tally, "the writer wrote different bytes"); }
+        }
     }
 
     if rec.measure_at_least > 0 {
         var m = serialize_measure_stream_init();
         var inner: i64 = -1;
-        assert(conf_run_steps(m, rec.steps, 0, rec.step_count, false, sabotage, inner));
-        assert(serialize_bits_processed(m) >= rec.measure_at_least);
+        guard conf_run_steps(m, rec.steps, 0, rec.step_count, false, sabotage, inner) else {
+            return conf_fail(rec, tally, "the measure refused");
+        }
+        guard serialize_bits_processed(m) >= rec.measure_at_least else { return conf_fail(rec, tally, "the measure is below its floor"); }
     }
-    return 1;
+    return true;
 }
 
 // Reads one vector file, running every record; returns the count. A blank line
 // separates records (STANDARD.md, The vector format).
-fn conf_run_file(filename: const u8[:], sabotage: i64, sabotage_hits: i64&) -> i64 {
+fn conf_run_file(filename: const u8[:], sabotage: i64, tally: Tally&) -> i64 {
     var content: u8[>..] = [];
     assert(read_file(filename, content));
-    var rec = Rec {
-        op: 0, has_op: false, preceding: 0, width: 0, count: 0, buffer_size: 0,
-        integer_bits: 0, fraction_bits: 0, previous: 0,
-        min: Int128 { lo: 0, hi: 0 }, max: Int128 { lo: 0, hi: 0 },
-        fmin: 0.0, fmax: 0.0, fres: 0.0, refused: false, canonical: false,
-        consumed: 0, measure_at_least: 0, has_expect: false,
-        expect_text: [0; 1024], expect_len: 0, bad: false,
-        wire: [0; 1024], wire_len: 0,
-        steps: [conf_empty_step(); 64], step_count: 0,
-    };
+    var rec = conf_new_rec();
     var count: i64 = 0;
     var ops: i64 = 0;
     var start: i64 = 0;
@@ -1020,7 +1091,8 @@ fn conf_run_file(filename: const u8[:], sabotage: i64, sabotage_hits: i64&) -> i
             let line = conf_trim_cr(content[start..i]);
             start = i + 1;
             if line.len == 0 {
-                count += conf_run_record(rec, sabotage, sabotage_hits);
+                if rec.has_op { count += 1; }
+                conf_run_record(rec, sabotage, tally);
                 conf_rec_reset(rec);
             } else {
                 if conf_starts(line, "operation ") { ops += 1; }
@@ -1039,7 +1111,7 @@ fn conf_is_txt(name: const u8[:]) -> bool {
 
 // Discovers every *.txt in the staged corpus directory; never a fixed list,
 // and an empty directory fails (STANDARD.md, The vector format; DESIGN.md (g)).
-fn conf_run_corpus(sabotage: i64, sabotage_hits: i64&) -> i64 {
+fn conf_run_corpus(sabotage: i64, tally: Tally&) -> i64 {
     var names: u8[>..] = [];
     assert(list_dir(".", names));
     var total: i64 = 0;
@@ -1050,7 +1122,7 @@ fn conf_run_corpus(sabotage: i64, sabotage_hits: i64&) -> i64 {
             let name = names[start..i];
             start = i + 1;
             if name.len > 0 && conf_is_txt(name) {
-                let n = conf_run_file(name, sabotage, sabotage_hits);
+                let n = conf_run_file(name, sabotage, tally);
                 print(name, ": ", n, " records");
                 total += n;
                 files += 1;
@@ -1059,12 +1131,83 @@ fn conf_run_corpus(sabotage: i64, sabotage_hits: i64&) -> i64 {
     }
     assert(files > 0);
     assert(total > 0);
-    print("corpus: ", files, " files, ", total, " records");
+    assert(tally.records == total);
+    print("corpus: ", files, " files, ", total, " records, ", total - tally.failures, " pass, ",
+          tally.failures, " fail");
     return total;
 }
 
-// The unknown-operation control: a scratch copy whose operation has no runner
-// must be rejected, never skipped (STANDARD.md, A gate nobody has seen go red).
+// The vector names a conformance-controls/<rule>.expected file lists: one per
+// line, `#` comments and blank lines skipped.
+fn conf_read_expected(filename: const u8[:]) -> u8[>..] {
+    var content: u8[>..] = [];
+    assert(read_file(filename, content));
+    var list: u8[>..] = [];
+    var start: i64 = 0;
+    for i in content.len + 1 {
+        if i == content.len || content[i] == '\n' {
+            let line = conf_trim_cr(content[start..i]);
+            start = i + 1;
+            if line.len > 0 && line[0] != '#' {
+                for k in line.len { list.push(line[k]); }
+                list.push('\n');
+            }
+        }
+    }
+    return list;
+}
+
+// Counts the lines of a newline-separated list.
+fn conf_list_count(list: const u8[:]) -> i64 {
+    var n: i64 = 0;
+    for i in list.len { if list[i] == '\n' { n += 1; } }
+    return n;
+}
+
+// Every line of `a` that `b` does not hold, printed with `label`; the count.
+fn conf_list_missing(a: const u8[:], b: const u8[:], label: const u8[:]) -> i64 {
+    var n: i64 = 0;
+    var start: i64 = 0;
+    for i in a.len {
+        if a[i] == '\n' {
+            let name = a[start..i];
+            if !conf_list_holds(b, name) {
+                print(label, name);
+                n += 1;
+            }
+            start = i + 1;
+        }
+    }
+    return n;
+}
+
+// THE CONTROL: the real corpus through this reader, which tools/controls.sh
+// built with ONE rule deleted, must fail exactly the vectors control.expected
+// names, and no others (STANDARD.md, A gate nobody has seen go red; the C++
+// runner's --expect-failures). Aborts unless the sets are equal.
+fn conf_control_main() {
+    let expected = conf_read_expected("control.expected");
+    assert(conf_list_count(expected) > 0);
+    var tally = conf_new_tally();
+    conf_run_corpus(SAB_NONE, tally);
+    let missing = conf_list_missing(expected, conf_failed(tally), "CONTROL expected to fail and passed: ");
+    let extra = conf_list_missing(conf_failed(tally), expected, "CONTROL failed and is not expected: ");
+    print("control: ", tally.failures, " failed, ", conf_list_count(expected), " expected, ",
+          missing, " missing, ", extra, " extra");
+    assert(missing == 0 && extra == 0);
+}
+
+// The unknown-operation control's driver: tools/controls.sh runs the vendored
+// conformance-controls/unknown-operation.txt through the runner, which must
+// REJECT it (abort), never skip it.
+fn conf_unknown_operation_main() {
+    var tally = conf_new_tally();
+    conf_run_file("unknown-operation.txt", SAB_NONE, tally);
+}
+
+// The unknown-operation control in the suite: a scratch copy whose operation
+// has no runner must be rejected, never skipped (STANDARD.md, A gate nobody
+// has seen go red).
 fn conf_file_is_supported(filename: const u8[:]) -> bool {
     var content: u8[>..] = [];
     if !read_file(filename, content) { return false; }
@@ -1086,33 +1229,36 @@ fn conf_unknown_operation_control() {
     assert(write_file("conformance_scratch.vector", body));
     assert(!conf_file_is_supported("conformance_scratch.vector"));
     assert(delete_file("conformance_scratch.vector"));
+    // wstring left the format in 2.0: it is an unknown operation now.
+    assert(conf_operation("wstring") == 0);
 }
 
 // goose: --debug
 fn TestConformanceCorpus() {
     conf_unknown_operation_control();
 
-    var hits: i64 = 0;
-    let total = conf_run_corpus(SAB_NONE, hits);
-    assert(total > 0);
+    var tally = conf_new_tally();
+    let total = conf_run_corpus(SAB_NONE, tally);
+    assert(total == 397);
+    assert(tally.failures == 0);
 
     // The sabotaged reader: the align rule switched off through an argument,
     // run against the real align.txt. It must go red on exactly the vectors
     // that pin the rule -- every refused align record is accepted, and every
     // accepted record still passes (STANDARD.md, A gate nobody has seen go
     // red).
-    var sabotage_hits: i64 = 0;
-    let n = conf_run_file("align.txt", SAB_ALIGN, sabotage_hits);
+    var align_tally = conf_new_tally();
+    let n = conf_run_file("align.txt", SAB_ALIGN, align_tally);
     assert(n == 10);
-    assert(sabotage_hits == 5);
+    assert(align_tally.failures == 5);
 
     // The second sabotaged reader: int's range refusal deleted. It must go
     // red on exactly int.txt's six out-of-range refusals; the two past-end
     // refusals still refuse and every accepted record still passes.
-    var int_hits: i64 = 0;
-    let ni = conf_run_file("int.txt", SAB_INT_RANGE, int_hits);
+    var int_tally = conf_new_tally();
+    let ni = conf_run_file("int.txt", SAB_INT_RANGE, int_tally);
     assert(ni == 26);
-    assert(int_hits == 6);
+    assert(int_tally.failures == 6);
 }
 
 // The unknown-operation control through the runner itself: a scratch vector
@@ -1123,23 +1269,77 @@ fn TestConformanceCorpus() {
 fn TestConformanceUnknownOperationRejected() {
     let body: u8[>..] = "operation no_such_operation\nname control\nbytes 00\nexpect value = 0\nconsumed 0\n";
     assert(write_file("unknown_operation.vector", body));
-    var hits: i64 = 0;
-    conf_run_file("unknown_operation.vector", SAB_NONE, hits);
+    var tally = conf_new_tally();
+    conf_run_file("unknown_operation.vector", SAB_NONE, tally);
+}
+
+// wstring is an unknown operation in format 2.0: a record naming it is
+// rejected, never run (PORT-BRIEF, the unknown-operation control).
+// want-abort: conformance: no runner for this operation, parameter, or fixed declaration
+fn TestConformanceWstringRejected() {
+    let body: u8[>..] = "operation wstring\nname control\nparam buffer_size = 8\nbytes 00\nexpect value =\nconsumed 3\n";
+    assert(write_file("wstring.vector", body));
+    var tally = conf_new_tally();
+    conf_run_file("wstring.vector", SAB_NONE, tally);
+}
+
+// A refused record must state its reason: a bare `expect refused` is a
+// malformed vector (STANDARD.md, Refusal reasons; The vector format).
+// want-abort: conformance: no runner for this operation, parameter, or fixed declaration
+fn TestConformanceBareRefusalRejected() {
+    let body: u8[>..] = "operation bool\nname control\nbytes\nexpect refused\n";
+    assert(write_file("bare_refusal.vector", body));
+    var tally = conf_new_tally();
+    conf_run_file("bare_refusal.vector", SAB_NONE, tally);
+}
+
+// A reason outside the closed list is a malformed vector too.
+// want-abort: conformance: no runner for this operation, parameter, or fixed declaration
+fn TestConformanceUnknownReasonRejected() {
+    let body: u8[>..] = "operation bool\nname control\nbytes\nexpect refused refused\n";
+    assert(write_file("unknown_reason.vector", body));
+    var tally = conf_new_tally();
+    conf_run_file("unknown_reason.vector", SAB_NONE, tally);
+}
+
+// A refusal for a reason other than the stated one FAILS the vector: the
+// empty stream is past_end, never value_out_of_range (STANDARD.md, Refusal
+// reasons: a disagreement about the format however red the stream ends up).
+fn TestConformanceWrongReasonFails() {
+    let body: u8[>..] = "operation bool\nname wrong-reason-control\nbytes\nexpect refused value_out_of_range\n\noperation bool\nname right-reason-control\nbytes\nexpect refused past_end\n";
+    assert(write_file("wrong_reason.vector", body));
+    var tally = conf_new_tally();
+    assert(conf_run_file("wrong_reason.vector", SAB_NONE, tally) == 2);
+    assert(tally.failures == 1);
+    assert(conf_list_holds(conf_failed(tally), "wrong-reason-control"));
+}
+
+// Vector names are unique across the corpus: a second record with a name
+// already run is rejected (STANDARD.md, The vector format).
+// want-abort: conformance: a vector name is not unique across the corpus
+fn TestConformanceDuplicateNameRejected() {
+    let body: u8[>..] = "operation bool\nname twice\nbytes 01\nexpect value = true\nconsumed 1\n\noperation bool\nname twice\nbytes 00\nexpect value = false\nconsumed 1\n";
+    assert(write_file("duplicate_name.vector", body));
+    var tally = conf_new_tally();
+    conf_run_file("duplicate_name.vector", SAB_NONE, tally);
+}
+
+// A writer_input record holds the writer to the record's bytes: handed an
+// input that encodes elsewhere, the vector FAILS (STANDARD.md, What a runner
+// checks). 0x3BA3D70A (0.005) over [0,10] at 0.01 writes integer 1, `01 00`;
+// the record below claims `00 00`.
+fn TestConformanceWriterInputChecked() {
+    let body: u8[>..] = "operation compressed_float\nname writer-input-control\nparam min = 0\nparam max = 10\nparam res = 0.01\nwriter_input bits = 0x3BA3D70A\nbytes 00 00\nexpect bits = 0x00000000\nconsumed 10\n";
+    assert(write_file("writer_input.vector", body));
+    var tally = conf_new_tally();
+    assert(conf_run_file("writer_input.vector", SAB_NONE, tally) == 1);
+    assert(tally.failures == 1);
 }
 
 // The parser reads every header field whole: `measure_at_least 122` is 122
 // (a slice one past the prefix once read it as 22, weakening every floor).
 fn TestConformanceParsesMeasureFloor() {
-    var rec = Rec {
-        op: 0, has_op: false, preceding: 0, width: 0, count: 0, buffer_size: 0,
-        integer_bits: 0, fraction_bits: 0, previous: 0,
-        min: Int128 { lo: 0, hi: 0 }, max: Int128 { lo: 0, hi: 0 },
-        fmin: 0.0, fmax: 0.0, fres: 0.0, refused: false, canonical: false,
-        consumed: 0, measure_at_least: 0, has_expect: false,
-        expect_text: [0; 1024], expect_len: 0, bad: false,
-        wire: [0; 1024], wire_len: 0,
-        steps: [conf_empty_step(); 64], step_count: 0,
-    };
+    var rec = conf_new_rec();
     conf_parse_line(rec, "measure_at_least 122");
     assert(rec.measure_at_least == 122);
     conf_parse_line(rec, "consumed 895");

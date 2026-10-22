@@ -16,6 +16,8 @@
 #   // want-abort: <message>    it PASSES only if it exits nonzero AND its output
 #                               holds `goose runtime error: <message>`
 #
+# A test whose build prints a compiler warning FAILS: zero warnings.
+#
 # Output: `RUN Test<Name>`, then `--- PASS Test<Name>` or `--- FAIL Test<Name>`
 # with the run's output indented below. The runner exits nonzero on any FAIL, on
 # a missing or empty test/<name>/, and on a test file that declares no test,
@@ -102,10 +104,17 @@ for name in $names; do
             elif [ $code -eq 0 ]; then
                 ok=1
             fi
+            # Zero warnings: a compiler warning anywhere in the program the
+            # test builds fails the test, naming it.
+            warned=""
+            if [ $ok -eq 1 ] && printf '%s\n' "$out" | grep -q ': warning: '; then
+                ok=0
+                warned=", a compiler warning: zero warnings"
+            fi
             if [ $ok -eq 1 ]; then
                 echo "--- PASS $t"
             else
-                echo "--- FAIL $t (exit $code${want:+, want abort: $want})"
+                echo "--- FAIL $t (exit $code${want:+, want abort: $want}$warned)"
                 printf '%s\n' "$out" | sed 's/^/    /'
                 dirfail=1
             fi

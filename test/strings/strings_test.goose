@@ -1,7 +1,8 @@
-// test/strings -- TestSerializeStrings (STANDARD.md, bytes, string, wstring,
-// align, object; DESIGN.md (a), (d), (e)). Every record of bytes.txt,
-// string.txt, wstring.txt, align.txt and object.txt is run, and the record
-// count per file is pinned to the file's count.
+// test/strings -- TestSerializeStrings (STANDARD.md, bytes, string, align,
+// object, Refusal reasons; DESIGN.md (a), (d), (e)). Every record of
+// bytes.txt, string.txt, align.txt and object.txt is run, every refusal is
+// held to the reason its record states, and the record count per file is
+// pinned to the file's count.
 
 import os;
 import .serialize;
@@ -87,11 +88,12 @@ fn serialize<S>(s: S&, seq: Seq&) -> bool {
 }
 
 struct Rec {
-    op: i64, // 1 bytes, 2 string, 3 wstring, 4 align, 5 object
+    op: i64, // 1 bytes, 2 string, 4 align, 5 object
     preceding: i64,
     count: i64,
     buffer_size: i64,
     refused: bool,
+    reason: i32,
     canonical: bool,
     measure_at_least: i64,
     consumed: i64,
@@ -99,8 +101,6 @@ struct Rec {
     wire_len: i64,
     value: u8[128],
     value_len: i64,
-    units: u32[8],
-    unit_count: i64,
     steps: SStep[16],
     step_count: i64,
 }
@@ -111,12 +111,12 @@ fn rec_reset(rec: Rec&) {
     rec.count = 0;
     rec.buffer_size = 0;
     rec.refused = false;
+    rec.reason = SERIALIZE_ERROR_NONE;
     rec.canonical = false;
     rec.measure_at_least = 0;
     rec.consumed = 0;
     rec.wire_len = 0;
     rec.value_len = 0;
-    rec.unit_count = 0;
     rec.step_count = 0;
 }
 
@@ -173,7 +173,7 @@ fn run_object_record(rec: Rec&) -> bool {
     let ok = serialize_object(r, seq);
     assert(ok == !rec.refused);
     if rec.refused {
-        assert(serialize_error(r) != SERIALIZE_ERROR_NONE);
+        assert(serialize_error(r) == rec.reason);
         return true;
     }
     assert(serialize_bits_processed(r) == rec.consumed);
@@ -207,7 +207,7 @@ fn run_bytes_record(rec: Rec&) -> bool {
     let ok = serialize_bytes(r, data[0..rec.count]);
     if rec.refused {
         assert(!ok);
-        assert(serialize_error(r) != SERIALIZE_ERROR_NONE);
+        assert(serialize_error(r) == rec.reason);
         return true;
     }
     assert(ok);
@@ -238,7 +238,7 @@ fn run_string_record(rec: Rec&) -> bool {
     let ok = serialize_string(r, out, rec.buffer_size);
     if rec.refused {
         assert(!ok);
-        assert(serialize_error(r) != SERIALIZE_ERROR_NONE);
+        assert(serialize_error(r) == rec.reason);
         assert(out.len == 1 && out[0] == 0x5A); // destination untouched
         return true;
     }
@@ -260,71 +260,6 @@ fn run_string_record(rec: Rec&) -> bool {
     return true;
 }
 
-fn append_utf8(out: u8[>..]&, cp: u32) {
-    if cp < 0x80 {
-        out.push(cp as! u8);
-    } else if cp < 0x800 {
-        out.push((0xC0 | (cp >> 6)) as! u8);
-        out.push((0x80 | (cp & 0x3F)) as! u8);
-    } else if cp < 0x10000 {
-        out.push((0xE0 | (cp >> 12)) as! u8);
-        out.push((0x80 | ((cp >> 6) & 0x3F)) as! u8);
-        out.push((0x80 | (cp & 0x3F)) as! u8);
-    } else {
-        out.push((0xF0 | (cp >> 18)) as! u8);
-        out.push((0x80 | ((cp >> 12) & 0x3F)) as! u8);
-        out.push((0x80 | ((cp >> 6) & 0x3F)) as! u8);
-        out.push((0x80 | (cp & 0x3F)) as! u8);
-    }
-}
-
-fn units_to_utf8(rec: Rec&) -> u8[>..] {
-    var out: u8[>..] = [];
-    var i: i64 = 0;
-    while i < rec.unit_count {
-        let c = rec.units[i];
-        if c >= 0xD800 && c <= 0xDBFF {
-            assert(i + 1 < rec.unit_count);
-            let lo = rec.units[i + 1];
-            append_utf8(out, 0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00));
-            i += 2;
-        } else {
-            append_utf8(out, c);
-            i += 1;
-        }
-    }
-    return out;
-}
-
-fn run_wstring_record(rec: Rec&) -> bool {
-    var padded: u8[256] = [0xFF; 256];
-    var r = serialize_read_stream_init_padded(padded, rec.wire[0..rec.wire_len]);
-    var out: u8[>..] = [];
-    out.push(0x5A);
-    let ok = serialize_wstring(r, out, rec.buffer_size);
-    if rec.refused {
-        assert(!ok);
-        assert(serialize_error(r) != SERIALIZE_ERROR_NONE);
-        assert(out.len == 1 && out[0] == 0x5A); // destination untouched
-        return true;
-    }
-    assert(ok);
-    let want = units_to_utf8(rec);
-    assert(out.len == want.len);
-    for i in want.len { assert(out[i] == want[i]); }
-    assert(serialize_bits_processed(r) == rec.consumed);
-
-    if rec.canonical {
-        var wbuf: u8[64] = [0xAA; 64];
-        var w = serialize_write_stream_init(wbuf);
-        assert(serialize_wstring(w, want[0..want.len], rec.buffer_size));
-        serialize_flush(w);
-        assert(serialize_bits_processed(w) == rec.consumed);
-        for i in rec.wire_len { assert(wbuf[i] == rec.wire[i]); }
-    }
-    return true;
-}
-
 fn run_align_record(rec: Rec&) -> bool {
     var padded: u8[256] = [0xFF; 256];
     var r = serialize_read_stream_init_padded(padded, rec.wire[0..rec.wire_len]);
@@ -333,7 +268,7 @@ fn run_align_record(rec: Rec&) -> bool {
     let ok = serialize_align(r);
     if rec.refused {
         assert(!ok);
-        assert(serialize_error(r) == SERIALIZE_ERROR_ALIGN);
+        assert(serialize_error(r) == rec.reason);
         return true;
     }
     assert(ok);
@@ -359,7 +294,6 @@ fn run_record(rec: Rec&) -> i64 {
     var ok = false;
     if rec.op == 1 { ok = run_bytes_record(rec); }
     else if rec.op == 2 { ok = run_string_record(rec); }
-    else if rec.op == 3 { ok = run_wstring_record(rec); }
     else if rec.op == 4 { ok = run_align_record(rec); }
     else if rec.op == 5 { ok = run_object_record(rec); }
     else { abort("conformance: unknown operation"); }
@@ -372,7 +306,7 @@ fn run_record(rec: Rec&) -> i64 {
 fn parse_step_value(st: SStep&, tok: const u8[:]) {
     if st.kind == 1 { st.val = parse_dec(tok); }
     else if st.kind == 2 { st.val = if str_equals(tok, "true") { 1 } else { 0 }; }
-    else if st.kind == 4 { assert(tok.len == 2); st.val = ((hex_digit(tok[0]) << 4) | hex_digit(tok[1])) as u64; }
+    else if st.kind == 4 { assert(tok.len == 2); st.val = (hex_digit(tok[0]) << 4) | hex_digit(tok[1]); }
 }
 
 // Assigns one `expect value` token to the matching step (object.txt only).
@@ -400,24 +334,6 @@ fn assign_expects(rec: Rec&, s: const u8[:]) {
 fn parse_value_line(rec: Rec&, s: const u8[:]) {
     if rec.op == 1 || rec.op == 2 {
         rec.value_len = parse_hex_into(s, rec.value[0..128]);
-    } else if rec.op == 3 {
-        rec.unit_count = 0;
-        var start: i64 = 0;
-        var i: i64 = 0;
-        while i <= s.len {
-            if i == s.len || s[i] == ' ' {
-                if i > start {
-                    assert(i - start == 4);
-                    var u: u32 = 0;
-                    for k in 4 { u = (u << 4) | (hex_digit(s[start + k]) as u32); }
-                    assert(rec.unit_count < 8);
-                    rec.units[rec.unit_count] = u;
-                    rec.unit_count += 1;
-                }
-                start = i + 1;
-            }
-            i += 1;
-        }
     } else if rec.op == 5 {
         assign_expects(rec, s);
     }
@@ -454,7 +370,6 @@ fn parse_line(rec: Rec&, line: const u8[:]) {
         let op = line[10..];
         if str_equals(op, "bytes") { rec.op = 1; }
         else if str_equals(op, "string") { rec.op = 2; }
-        else if str_equals(op, "wstring") { rec.op = 3; }
         else if str_equals(op, "align") { rec.op = 4; }
         else if str_equals(op, "sequence") { rec.op = 5; }
         else { abort("conformance: unknown operation in strings vector file"); }
@@ -464,8 +379,9 @@ fn parse_line(rec: Rec&, line: const u8[:]) {
         rec.wire_len = 0;
     } else if str_starts(line, "bytes ") {
         rec.wire_len = parse_hex_into(line[6..], rec.wire[0..128]);
-    } else if str_equals(line, "expect refused") {
+    } else if str_starts(line, "expect refused ") {
         rec.refused = true;
+        rec.reason = reason_of(line[15..]);
     } else if str_equals(line, "expect value =") {
         parse_value_line(rec, line[14..14]);
     } else if str_starts(line, "expect value = ") {
@@ -473,7 +389,7 @@ fn parse_line(rec: Rec&, line: const u8[:]) {
     } else if str_starts(line, "consumed ") {
         rec.consumed = parse_dec(line[9..]) as! i64;
     } else if str_starts(line, "measure_at_least ") {
-        rec.measure_at_least = parse_dec(line[18..]) as! i64;
+        rec.measure_at_least = parse_dec(line[17..]) as! i64;
     } else if str_equals(line, "writer canonical") {
         rec.canonical = true;
     } else {
@@ -481,14 +397,24 @@ fn parse_line(rec: Rec&, line: const u8[:]) {
     }
 }
 
+// The reason a refused record states, from the closed list (STANDARD.md,
+// Refusal reasons); a missing or unknown reason is a malformed vector.
+fn reason_of(name: const u8[:]) -> i32 {
+    for k in 8 {
+        let kind = (k + 1) as! i32;
+        if str_equals(name, serialize_refusal_name(kind)) { return kind; }
+    }
+    abort("conformance: refused record states no known reason");
+}
+
 fn run_conformance_file(filename: const u8[:]) -> i64 {
     var content: u8[>..] = [];
     assert(read_file(filename, content));
     var rec = Rec {
         op: 0, preceding: 0, count: 0, buffer_size: 0, refused: false,
-        canonical: false, measure_at_least: 0, consumed: 0,
+        reason: SERIALIZE_ERROR_NONE, canonical: false, measure_at_least: 0, consumed: 0,
         wire: [0; 128], wire_len: 0, value: [0; 128], value_len: 0,
-        units: [0; 8], unit_count: 0, steps: [SStep { kind: 0, n: 0, val: 0 }; 16], step_count: 0,
+        steps: [SStep { kind: 0, n: 0, val: 0 }; 16], step_count: 0,
     };
     var count = 0;
     var start: i64 = 0;
@@ -511,13 +437,86 @@ fn run_conformance_file(filename: const u8[:]) -> i64 {
 fn TestSerializeStrings() {
     let n_bytes = run_conformance_file("bytes.txt");
     let n_string = run_conformance_file("string.txt");
-    let n_wstring = run_conformance_file("wstring.txt");
     let n_align = run_conformance_file("align.txt");
     let n_object = run_conformance_file("object.txt");
-    print(n_bytes, n_string, n_wstring, n_align, n_object);
-    assert(n_bytes == 11);
-    assert(n_string == 38);
-    assert(n_wstring == 28);
+    print(n_bytes, n_string, n_align, n_object);
+    assert(n_bytes == 12);
+    assert(n_string == 53);
     assert(n_align == 10);
     assert(n_object == 7);
+}
+
+// Allocate-before-check (PORT-BRIEF, added 2026-10-22): a length field that
+// claims far more bytes than the stream holds is refused as PAST_END before
+// the destination is touched or grown. buffer_size 2^20 gives a 20-bit length
+// field; all ones claims 1048575 bytes over a 4-byte stream.
+fn TestSerializeStringClaimedLengthCheckedFirst() {
+    var wire: u8[16] = [0xFF, 0xFF, 0x0F, 0x41, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    var r = serialize_read_stream_init(wire, 4);
+    var out: u8[>..] = [];
+    out.push(0x5A);
+    assert(!serialize_string(r, out, 1048576));
+    assert(serialize_error(r) == SERIALIZE_ERROR_PAST_END);
+    assert(out.len == 1 && out[0] == 0x5A);
+}
+
+// The string writer is handed text with no zero byte, as it is handed an int
+// in its range (STANDARD.md, string): a NUL is caller error and aborts.
+// want-abort: serialize: string must not contain a zero byte
+fn TestSerializeStringWriterNulAborts() {
+    var buf: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(buf);
+    let text: u8[3] = [0x41, 0x00, 0x42];
+    serialize_string(w, text[0..3], 16);
+}
+
+// end (STANDARD.md, end): the writer and the measure emit and cost nothing;
+// the reader accepts an exactly consumed stream and leaves the cursor at its
+// end, refuses a whole byte left as TRAILING_DATA before it looks at padding,
+// refuses a set padding bit as NONZERO_PADDING, and on a failed stream keeps
+// the first refusal's reason.
+fn TestSerializeEnd() {
+    var buf: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(buf);
+    assert(serialize_bits(w, 5, 3));
+    assert(serialize_end(w));
+    assert(serialize_bits_processed(w) == 3);
+    var m = serialize_measure_stream_init();
+    assert(serialize_bits(m, 5, 3));
+    assert(serialize_end(m));
+    assert(serialize_bits_processed(m) == 3);
+
+    var exact: u8[16] = [0x05, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    var r = serialize_read_stream_init(exact, 1);
+    var v: u32 = 0;
+    assert(serialize_bits(r, v, 3) && v == 5);
+    assert(serialize_end(r));
+    assert(serialize_bits_processed(r) == 8);
+    assert(serialize_bits_remaining(r) == 0);
+    assert(serialize_error(r) == SERIALIZE_ERROR_NONE);
+
+    // A whole byte left, with set padding too: TRAILING_DATA comes first.
+    var trailing: u8[16] = [0xFD, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    var t = serialize_read_stream_init(trailing, 2);
+    assert(serialize_bits(t, v, 3));
+    assert(!serialize_end(t));
+    assert(serialize_error(t) == SERIALIZE_ERROR_TRAILING_DATA);
+
+    var padded: u8[16] = [0x85, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    var p = serialize_read_stream_init(padded, 1);
+    assert(serialize_bits(p, v, 3));
+    assert(!serialize_end(p));
+    assert(serialize_error(p) == SERIALIZE_ERROR_NONZERO_PADDING);
+
+    // The latch first: an end on a failed stream refuses with the first reason.
+    var empty: u8[8] = [0; 8];
+    var e = serialize_read_stream_init(empty, 0);
+    assert(!serialize_bits(e, v, 1));
+    assert(!serialize_end(e));
+    assert(serialize_error(e) == SERIALIZE_ERROR_PAST_END);
+
+    // A latched write stream refuses its end too.
+    var wl = serialize_write_stream_init(buf);
+    assert(!serialize_fail(wl, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE));
+    assert(!serialize_end(wl));
 }

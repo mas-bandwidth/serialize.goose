@@ -1,6 +1,7 @@
 // test/float -- TestSerializeFloat (STANDARD.md, float, double, fixed,
-// compressed_float; DESIGN.md (a), (c), (e)). Every record of float.txt,
-// double.txt, fixed.txt and compressed_float.txt is run; the runner prints the
+// compressed_float, Finite values only; DESIGN.md (a), (c), (e)). Every record
+// of float.txt, double.txt, fixed.txt and compressed_float.txt is run, every
+// refusal is held to the reason its record states; the runner prints the
 // record count per file and fails unless it equals the file's own count.
 
 import os;
@@ -52,7 +53,7 @@ fn ff_parse_hex_u64(s: const u8[:]) -> u64 {
     assert(s.len > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'));
     var v: u64 = 0;
     for i in 2..s.len {
-        v = (v << 4) | (ff_hex_nibble(s[i]) as u64);
+        v = (v << 4) | ff_hex_nibble(s[i]);
     }
     return v;
 }
@@ -103,8 +104,11 @@ struct FloatRecord {
     fraction_bits: i64,
     min_i: i64,
     max_i: i64,
+    min_f: f32,
+    max_f: f32,
     res: f32,
     refused: bool,
+    reason: i32,
     has_bits: bool,
     expect_bits: u64,
     expect_value: Int128,
@@ -120,8 +124,11 @@ fn ff_reset(rec: FloatRecord&) {
     rec.fraction_bits = 0;
     rec.min_i = 0;
     rec.max_i = 0;
+    rec.min_f = 0.0;
+    rec.max_f = 0.0;
     rec.res = 1.0;
     rec.refused = false;
+    rec.reason = SERIALIZE_ERROR_NONE;
     rec.has_bits = false;
     rec.expect_bits = 0;
     rec.expect_value = Int128 { lo: 0, hi: 0 };
@@ -134,6 +141,24 @@ fn ff_parse_param_i64(s: const u8[:]) -> i64 {
     let v, ok = parse_int(s);
     assert(ok);
     return v;
+}
+
+// A float32 parameter: the decimal rounds once, to the nearest float32
+// (STANDARD.md, The vector format: res under compressed_float is a float32).
+fn ff_parse_param_f32(s: const u8[:]) -> f32 {
+    let v, ok = parse_flt(s);
+    assert(ok);
+    return v as! f32;
+}
+
+// The reason a refused record states, from the closed list (STANDARD.md,
+// Refusal reasons); a missing or unknown reason is a malformed vector.
+fn ff_reason(name: const u8[:]) -> i32 {
+    for k in 8 {
+        let kind = (k + 1) as! i32;
+        if ff_equals(name, serialize_refusal_name(kind)) { return kind; }
+    }
+    abort("conformance: refused record states no known reason");
 }
 
 fn ff_run_fixed(rec: FloatRecord&) -> bool {
@@ -177,6 +202,7 @@ fn ff_finish_fixed32(rec: FloatRecord&, r: ReadStream&, ok: bool, raw: i32) -> b
     if rec.refused {
         assert(!ok);
         assert(raw == 123456789);
+        assert(serialize_error(r) == rec.reason);
         return true;
     }
     assert(ok);
@@ -187,6 +213,7 @@ fn ff_finish_fixed64(rec: FloatRecord&, r: ReadStream&, ok: bool, raw: i64) -> b
     if rec.refused {
         assert(!ok);
         assert(raw == 123456789);
+        assert(serialize_error(r) == rec.reason);
         return true;
     }
     assert(ok);
@@ -197,6 +224,7 @@ fn ff_finish_fixed128(rec: FloatRecord&, r: ReadStream&, ok: bool, raw: Int128) 
     if rec.refused {
         assert(!ok);
         assert(raw.lo == 0x1234 && raw.hi == 0x5678);
+        assert(serialize_error(r) == rec.reason);
         return true;
     }
     assert(ok);
@@ -230,10 +258,11 @@ fn ff_run_float(rec: FloatRecord&) -> bool {
     if rec.refused {
         assert(!ok);
         assert(serialize_f32_bits(got) == 0x3F800000);
+        assert(serialize_error(r) == rec.reason);
         return true;
     }
     assert(ok);
-    assert(serialize_f32_bits(got) as u64 == rec.expect_bits);
+    assert(serialize_f32_bits(got) == rec.expect_bits);
     assert(serialize_bits_processed(r) == rec.consumed);
     if rec.canonical {
         var buf: u8[16] = [0xAA; 16];
@@ -254,6 +283,7 @@ fn ff_run_double(rec: FloatRecord&) -> bool {
     if rec.refused {
         assert(!ok);
         assert(serialize_f64_bits(got) == 0x3FF0000000000000);
+        assert(serialize_error(r) == rec.reason);
         return true;
     }
     assert(ok);
@@ -274,14 +304,15 @@ fn ff_run_compressed(rec: FloatRecord&) -> bool {
     var padded: u8[64] = [0; 64];
     ff_fill_padded(rec, padded);
     let r = serialize_read_stream_init(padded, rec.wire.len);
-    let ok = serialize_compressed_float(r, got, rec.min_i as f32, rec.max_i as f32, rec.res);
+    let ok = serialize_compressed_float(r, got, rec.min_f, rec.max_f, rec.res);
     if rec.refused {
         assert(!ok);
         assert(serialize_f32_bits(got) == 0x3F800000);
+        assert(serialize_error(r) == rec.reason);
         return true;
     }
     assert(ok);
-    assert(serialize_f32_bits(got) as u64 == rec.expect_bits);
+    assert(serialize_f32_bits(got) == rec.expect_bits);
     assert(serialize_bits_processed(r) == rec.consumed);
     return true;
 }
@@ -301,7 +332,8 @@ fn ff_run_file(filename: const u8[:], kind: i64) -> i64 {
     assert(read_file(filename, content));
     var rec = FloatRecord {
         has_op: false, op_kind: 0, integer_bits: 0, fraction_bits: 0,
-        min_i: 0, max_i: 0, res: 1.0, refused: false, has_bits: false,
+        min_i: 0, max_i: 0, min_f: 0.0, max_f: 0.0, res: 1.0, refused: false,
+        reason: SERIALIZE_ERROR_NONE, has_bits: false,
         expect_bits: 0, expect_value: Int128 { lo: 0, hi: 0 }, consumed: 0,
         canonical: false, wire: [],
     };
@@ -323,9 +355,11 @@ fn ff_run_file(filename: const u8[:], kind: i64) -> i64 {
                 } else if ff_starts_with(line, "param fraction_bits = ") {
                     rec.fraction_bits = ff_parse_param_i64(line[22..]);
                 } else if ff_starts_with(line, "param min = ") {
-                    rec.min_i = ff_parse_param_i64(line[12..]);
+                    if kind == 4 { rec.min_f = ff_parse_param_f32(line[12..]); }
+                    else { rec.min_i = ff_parse_param_i64(line[12..]); }
                 } else if ff_starts_with(line, "param max = ") {
-                    rec.max_i = ff_parse_param_i64(line[12..]);
+                    if kind == 4 { rec.max_f = ff_parse_param_f32(line[12..]); }
+                    else { rec.max_i = ff_parse_param_i64(line[12..]); }
                 } else if ff_starts_with(line, "param res = ") {
                     let v, ok = parse_flt(line[12..]);
                     assert(ok);
@@ -334,8 +368,9 @@ fn ff_run_file(filename: const u8[:], kind: i64) -> i64 {
                     rec.wire.clear();
                 } else if ff_starts_with(line, "bytes ") {
                     ff_parse_hex_bytes(line[6..], rec.wire);
-                } else if ff_equals(line, "expect refused") {
+                } else if ff_starts_with(line, "expect refused ") {
                     rec.refused = true;
+                    rec.reason = ff_reason(line[15..]);
                 } else if ff_starts_with(line, "expect bits = ") {
                     rec.expect_bits = ff_parse_hex_u64(line[14..]);
                     rec.has_bits = true;
@@ -371,20 +406,72 @@ fn ff_float_round_trip(bits: u32) {
     assert(serialize_f32_bits(got) == bits);
 }
 
+// A non-finite pattern is not a value the format carries (STANDARD.md, Finite
+// values only): the writer latches NON_FINITE_FLOAT and writes nothing, and a
+// reader handed the raw bits refuses them as NON_FINITE_FLOAT with the
+// destination untouched.
+fn ff_float_refused(bits: u32) {
+    assert(!serialize_float_bits_are_finite(bits));
+    var buf: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(buf);
+    assert(!serialize_float(w, serialize_f32_from_bits(bits)));
+    assert(serialize_error(w) == SERIALIZE_ERROR_NON_FINITE_FLOAT);
+    assert(serialize_bits_processed(w) == 0);
+    var wire: u8[16] = [0; 16];
+    wire[0] = bits as! u8;
+    wire[1] = (bits >> 8) as! u8;
+    wire[2] = (bits >> 16) as! u8;
+    wire[3] = (bits >> 24) as! u8;
+    var r = serialize_read_stream_init(wire, 4);
+    var got: f32 = 2.0;
+    assert(!serialize_float(r, got));
+    assert(serialize_f32_bits(got) == 0x40000000);
+    assert(serialize_error(r) == SERIALIZE_ERROR_NON_FINITE_FLOAT);
+    var m = serialize_measure_stream_init();
+    assert(serialize_float(m, serialize_f32_from_bits(bits)));
+}
+
+fn ff_double_refused(bits: u64) {
+    assert(!serialize_double_bits_are_finite(bits));
+    var buf: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(buf);
+    assert(!serialize_double(w, serialize_f64_from_bits(bits)));
+    assert(serialize_error(w) == SERIALIZE_ERROR_NON_FINITE_FLOAT);
+    assert(serialize_bits_processed(w) == 0);
+    var wire: u8[16] = [0; 16];
+    for i in 8 { wire[i] = (bits >> ((i * 8) as u64)) as! u8; }
+    var r = serialize_read_stream_init(wire, 8);
+    var got: f64 = 2.0;
+    assert(!serialize_double(r, got));
+    assert(serialize_f64_bits(got) == 0x4000000000000000);
+    assert(serialize_error(r) == SERIALIZE_ERROR_NON_FINITE_FLOAT);
+}
+
 fn ff_test_float_bit_transparency() {
-    // every float32 NaN class (quiet, signaling, payload, negative) and both
-    // zeros, plus the infinities (STANDARD.md, float: bit transparency).
+    // Every finite class keeps its exact bits: both zeros, the smallest and
+    // largest subnormal, the largest finite of either sign (STANDARD.md,
+    // Finite values only, every one bit exact).
     ff_float_round_trip(0x00000000);
     ff_float_round_trip(0x80000000);
-    ff_float_round_trip(0x7F800000);
-    ff_float_round_trip(0xFF800000);
-    ff_float_round_trip(0x7FC00000);
-    ff_float_round_trip(0xFFC00000);
-    ff_float_round_trip(0x7F800001);
-    ff_float_round_trip(0xFF800001);
-    ff_float_round_trip(0x7FDEAD00);
-    ff_float_round_trip(0xFFFFFFFF);
     ff_float_round_trip(0x00000001);
+    ff_float_round_trip(0x807FFFFF);
+    ff_float_round_trip(0x7F7FFFFF);
+    ff_float_round_trip(0xFF7FFFFF);
+    // Every non-finite class is refused, on both sides: both infinities, a
+    // quiet, a signaling and a payload NaN of either sign, all bits set.
+    ff_float_refused(0x7F800000);
+    ff_float_refused(0xFF800000);
+    ff_float_refused(0x7FC00000);
+    ff_float_refused(0xFFC00000);
+    ff_float_refused(0x7F800001);
+    ff_float_refused(0xFF800001);
+    ff_float_refused(0x7FDEAD00);
+    ff_float_refused(0xFFFFFFFF);
+    ff_double_refused(0x7FF0000000000000);
+    ff_double_refused(0xFFF0000000000000);
+    ff_double_refused(0x7FF8000000000000);
+    ff_double_refused(0x7FF0000000000001);
+    ff_double_refused(0xFFFFFFFFFFFFFFFF);
 }
 
 fn ff_test_compressed_boundaries() {
@@ -398,7 +485,7 @@ fn ff_test_compressed_boundaries() {
         var r = serialize_read_stream_init(buf, 2);
         var got: f32 = 0.0;
         assert(serialize_compressed_float(r, got, 0.0, 10.0, 0.01));
-        assert(serialize_f32_bits(got) as u64 == codes[k] as u64);
+        assert(serialize_f32_bits(got) == codes[k]);
     }
 }
 
@@ -414,10 +501,10 @@ fn TestSerializeFloat() {
     print("double.txt: ", n_double, " records");
     print("fixed.txt: ", n_fixed, " records");
     print("compressed_float.txt: ", n_compressed, " records");
-    assert(n_float == 18);
-    assert(n_double == 18);
+    assert(n_float == 22);
+    assert(n_double == 22);
     assert(n_fixed == 34);
-    assert(n_compressed == 29);
+    assert(n_compressed == 36);
 }
 
 // want-abort: serialize: compressed float min must be less than max
@@ -453,6 +540,38 @@ fn TestSerializeFloatCompressedNonFiniteAborts() {
     var buf: u8[8] = [0; 8];
     var w = serialize_write_stream_init(buf);
     serialize_compressed_float(w, serialize_f32_from_bits(0x7F800000), 0.0, 1.0, 0.01);
+}
+
+// A declaration whose top decodes to an infinity is non-conforming: over
+// [3 * 2^103, FLT_MAX] at resolution 2^104 delta and values are finite and
+// min + delta rounds to 2^128 (STANDARD.md, compressed_float). The WRITE path
+// aborts on it; the read path does not, and refuses the top integer instead.
+// want-abort: serialize: compressed float declaration must decode its top to a finite value
+fn TestSerializeFloatCompressedTopInfiniteAborts() {
+    var buf: u8[8] = [0; 8];
+    var w = serialize_write_stream_init(buf);
+    serialize_compressed_float(w, 1.0e38, serialize_f32_from_bits(0x73C00000),
+                               serialize_f32_from_bits(0x7F7FFFFF), serialize_f32_from_bits(0x73800000));
+}
+
+// The same declaration on the read path: no abort, the top integer's decode
+// (2^128, +inf) is refused as NON_FINITE_FLOAT with the destination
+// untouched, and the integer one below it decodes finite (STANDARD.md,
+// compressed_float, The decode must be finite).
+fn TestSerializeFloatCompressedTopInfiniteRefused() {
+    let min = serialize_f32_from_bits(0x73C00000);
+    let max = serialize_f32_from_bits(0x7F7FFFFF);
+    let res = serialize_f32_from_bits(0x73800000);
+    var top: u8[16] = [0xFE, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    var r = serialize_read_stream_init(top, 3);
+    var got: f32 = 2.0;
+    assert(!serialize_compressed_float(r, got, min, max, res));
+    assert(serialize_f32_bits(got) == 0x40000000);
+    assert(serialize_error(r) == SERIALIZE_ERROR_NON_FINITE_FLOAT);
+    var below: u8[16] = [0xFD, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    var r2 = serialize_read_stream_init(below, 3);
+    assert(serialize_compressed_float(r2, got, min, max, res));
+    assert(serialize_f32_bits(got) == 0x7F7FFFFE);
 }
 
 // fixed's WRITER refuses a raw value outside [min,max] in Q form, latches

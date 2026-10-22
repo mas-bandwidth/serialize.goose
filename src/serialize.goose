@@ -14,4 +14,4 @@ import .serialize_bytes;
 import .serialize_object;
 
 // The wire format this library writes and reads (STANDARD.md, Format version).
-let SERIALIZE_FORMAT_VERSION = "1.1";
+let SERIALIZE_FORMAT_VERSION = "2.0";

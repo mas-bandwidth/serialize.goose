@@ -137,7 +137,7 @@ fn fixed_write_core(s: WriteStream&, raw_value: Int128, raw_min: Int128, raw_max
 }
 
 fn fixed_read_core(s: ReadStream&, raw_value: Int128&, raw_min: Int128, raw_max: Int128) -> bool {
-    guard s.error == SERIALIZE_ERROR_NONE else { return false; }
+    guard s.error == SERIALIZE_ERROR_NONE else { return false; } // the latch first, zero-bit reads included
     let span = fixed_u128_sub(raw_max, raw_min);
     let bits = fixed_u128_bit_length(span);
     if bits == 0 {
@@ -166,21 +166,21 @@ fn fixed_measure_core(s: MeasureStream&, raw_min: Int128, raw_max: Int128) -> bo
 fn serialize_fixed32(s: WriteStream&, value: i32, integer_bits: i64, fraction_bits: i64, min: i32, max: i32) -> bool {
     fixed_check_format32(integer_bits, fraction_bits);
     if min > max { abort("serialize: min must not be greater than max"); }
-    return fixed_write_core(s, fixed_u128_from_i64(value as i64), fixed_raw_bound(min as i64, fraction_bits),
-                            fixed_raw_bound(max as i64, fraction_bits));
+    return fixed_write_core(s, fixed_u128_from_i64(value), fixed_raw_bound(min, fraction_bits),
+                            fixed_raw_bound(max, fraction_bits));
 }
 fn serialize_fixed32(s: ReadStream&, value: i32&, integer_bits: i64, fraction_bits: i64, min: i32, max: i32) -> bool {
     fixed_check_format32(integer_bits, fraction_bits);
     if min > max { abort("serialize: min must not be greater than max"); }
     var raw = Int128 { lo: 0, hi: 0 };
-    guard fixed_read_core(s, raw, fixed_raw_bound(min as i64, fraction_bits), fixed_raw_bound(max as i64, fraction_bits)) else { return false; }
+    guard fixed_read_core(s, raw, fixed_raw_bound(min, fraction_bits), fixed_raw_bound(max, fraction_bits)) else { return false; }
     value = raw.lo as! i32;
     return true;
 }
 fn serialize_fixed32(s: MeasureStream&, value: i32, integer_bits: i64, fraction_bits: i64, min: i32, max: i32) -> bool {
     fixed_check_format32(integer_bits, fraction_bits);
     if min > max { abort("serialize: min must not be greater than max"); }
-    return fixed_measure_core(s, fixed_raw_bound(min as i64, fraction_bits), fixed_raw_bound(max as i64, fraction_bits));
+    return fixed_measure_core(s, fixed_raw_bound(min, fraction_bits), fixed_raw_bound(max, fraction_bits));
 }
 
 // ---- fixed64 ---------------------------------------------------------------

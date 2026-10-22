@@ -90,7 +90,8 @@ fn serialize_int64(s: MeasureStream&, value: i64, min: i64, max: i64) -> bool {
 // (STANDARD.md, int_relative). previous outside the domain and current not
 // above previous are caller error and abort, as serialize.c asserts; the
 // difference is unsigned so --debug cannot trap on it. The absolute tier
-// transmits current itself as 32 unsigned raw bits.
+// transmits current itself as 32 unsigned raw bits, and a reader refuses it
+// as NON_CANONICAL when the difference has a bounded tier.
 fn serialize_int_relative(s: WriteStream&, previous: i32, current: i32) -> bool {
     if previous < 0 { abort("serialize: int_relative previous must be in [0, 2147483647]"); }
     if current <= previous { abort("serialize: int_relative current must be greater than previous"); }
@@ -116,6 +117,7 @@ fn serialize_int_relative(s: ReadStream&, previous: i32, current: i32&) -> bool 
     var flag = false;
     var difference: i32 = 0;
     var reconstructed: u32 = 0;
+    var absolute = false;
     if !serialize_bool(s, flag) { return false; }
     if flag {
         reconstructed = (previous as! u32) + 1;
@@ -146,6 +148,7 @@ fn serialize_int_relative(s: ReadStream&, previous: i32, current: i32&) -> bool 
                             reconstructed = (previous as! u32) + (difference as! u32);
                         } else {
                             if !serialize_bits(s, reconstructed, 32) { return false; }
+                            absolute = true;
                         }
                     }
                 }
@@ -154,6 +157,14 @@ fn serialize_int_relative(s: ReadStream&, previous: i32, current: i32&) -> bool 
     }
     if reconstructed > 0x7FFFFFFF || reconstructed <= (previous as! u32) {
         return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+    }
+    // The absolute tier is canonical too: a current in the domain, above
+    // previous and no more than 69914 above it has a bounded encoding, so the
+    // absolute one is refused as NON_CANONICAL. The domain rule above runs
+    // first, and the difference is taken only once current > previous holds,
+    // so it cannot wrap (STANDARD.md, int_relative).
+    if absolute && reconstructed - (previous as! u32) <= 69914 {
+        return serialize_fail(s, SERIALIZE_ERROR_NON_CANONICAL);
     }
     current = reconstructed as! i32;
     return true;

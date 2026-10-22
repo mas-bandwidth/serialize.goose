@@ -58,8 +58,8 @@ fn touch_every_operation<S>(s: S&, never: bool) {
     if never { serialize_bytes(s, blob); }
     if never { serialize_string(s, text, 32); }
     if never { serialize_string(s, limited, 16); }
-    if never { serialize_wstring(s, text, 32); }
     if never { serialize_object(s, pair); }
+    if never { serialize_end(s); }
     if never { serialize_bits_processed(s); }
     if never { serialize_bytes_processed(s); }
     if never { serialize_error(s); }
@@ -81,6 +81,9 @@ fn touch_every_helper(never: bool) {
     if never { serialize_f32_from_bits(0); }
     if never { serialize_f64_bits(1.0); }
     if never { serialize_f64_from_bits(0); }
+    if never { serialize_float_bits_are_finite(0); }
+    if never { serialize_double_bits_are_finite(0); }
+    if never { print(serialize_refusal_name(SERIALIZE_ERROR_PAST_END)); }
     if never { print(SERIALIZE_FORMAT_VERSION); }
 }
 
@@ -106,7 +109,7 @@ fn TestSmoke() {
     assert(serialize_error(w) == SERIALIZE_ERROR_NONE && serialize_error(r) == SERIALIZE_ERROR_NONE);
 
     // The latch: a read stream over empty data (0 bytes, the 8-byte slack
-    // only). A failing call latches Overflow and leaves its destination
+    // only). A failing call latches PAST_END and leaves its destination
     // unchanged; every later call fails, zero-bit reads included, consumes
     // nothing and leaves its destination unchanged.
     var slack: u8[8] = [0; 8];
@@ -115,7 +118,7 @@ fn TestSmoke() {
     var v: u8 = 7;
     assert(!serialize_uint8(empty, v));
     assert(v == 7);
-    assert(serialize_error(empty) == SERIALIZE_ERROR_OVERFLOW);
+    assert(serialize_error(empty) == SERIALIZE_ERROR_PAST_END);
     var b = true;
     assert(!serialize_bool(empty, b));
     assert(b);
@@ -123,17 +126,17 @@ fn TestSmoke() {
     assert(!serialize_bits(empty, u, 1));
     assert(u == 9);
     assert(!serialize_align(empty));
-    assert(serialize_error(empty) == SERIALIZE_ERROR_OVERFLOW);
+    assert(serialize_error(empty) == SERIALIZE_ERROR_PAST_END);
     assert(serialize_bits_processed(empty) == 0);
 
     // The first error sticks: a later serialize_fail does not replace it.
-    assert(!serialize_fail(empty, SERIALIZE_ERROR_ALIGN));
-    assert(serialize_error(empty) == SERIALIZE_ERROR_OVERFLOW);
+    assert(!serialize_fail(empty, SERIALIZE_ERROR_NONZERO_PADDING));
+    assert(serialize_error(empty) == SERIALIZE_ERROR_PAST_END);
 
     // A padded init whose destination cannot hold bytes + 8 starts latched.
     var small: u8[8] = [0; 8];
     var refused = serialize_read_stream_init_padded(small, buffer[0..1]);
-    assert(serialize_error(refused) == SERIALIZE_ERROR_OVERFLOW);
+    assert(serialize_error(refused) == SERIALIZE_ERROR_PAST_END);
     var w8: u8 = 3;
     assert(!serialize_uint8(refused, w8));
     assert(w8 == 3);

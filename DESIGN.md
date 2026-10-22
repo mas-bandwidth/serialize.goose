@@ -6,20 +6,22 @@ schema's Goose leg. This page fixes every decision; each family card after it
 fills one set of files and decides nothing. Sections (a) to (g) are the
 contract.
 
-**The reference.** serialize.c v1.11.2
-(`7303fa47cada102af10c396c6dd5aa1f0e99f2ab`) is matched byte for byte and
-refusal for refusal. serialize.luau (branch `sprint/serialize-luau`,
+**The reference.** serialize.c v2.0.0
+(`e11585b0dfbf214ed37c442d5f8b6133fd8b10df`), format 2.0, is matched byte for
+byte and refusal for refusal, reason for reason. (Format 1.1 was matched
+against serialize.c v1.11.2, `7303fa47cada102af10c396c6dd5aa1f0e99f2ab`.) serialize.luau (branch `sprint/serialize-luau`,
 `e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
 supplied the shape of this page. Both are read, never imported.
 
-**The vendored standard.** `STANDARD.md` and `conformance/*.txt` are copied
-VERBATIM from mas-bandwidth/serialize at tag v1.17.0
-(`56a1b590af814474b56ff72b0d05d4be4d7cf41b`). They are the same bytes as
-serialize.c v1.11.2's own copies: `diff -r conformance <serialize v1.17.0>/conformance`,
-`diff -r <serialize v1.17.0>/conformance <serialize.c v1.11.2>/conformance` and
-`cmp STANDARD.md <serialize.c v1.11.2>/STANDARD.md` are all empty (checked
-2026-10-19 on hulk). Neither file is edited here; a change arrives by
-re-vendoring from a new tag.
+**The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`,
+`conformance/*.txt` and `conformance-controls/` are copied
+VERBATIM from mas-bandwidth/serialize at tag v2.0.0
+(`8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`, the merge of the format 2.0 pin
+`dedf58efa93832fd243dbf3a2a1ca0a91c46b14b`, whose copies are the same bytes:
+`git diff dedf58e v2.0.0 -- STANDARD.md IMPLEMENTING.md conformance
+conformance-controls` is empty, checked 2026-10-22). None of them is edited
+here; a change arrives by re-vendoring from a new tag, `tools/revendor.sh
+<tag>`, and the corpus job in ci.yml diffs all four against the tag.
 
 **The pin.** Goose v2026.2 (aardappel/goose tag v2026.2, annotated tag object
 `7ad96d6d47f979bb9bcc3d51f610d65efba8335e`, commit
@@ -60,7 +62,7 @@ works); a read overload takes it BY REFERENCE (`i32&`) and assigns it only on
 success. A generic caller passes the same lvalue to both. The measure
 overloads take the value too, unlike serialize.c's measure functions, so that
 one generic function serves all three streams; they ignore it except where the
-width depends on it (int_relative, string, wstring).
+width depends on it (int_relative, string).
 
 ### Types and constants (src/serialize_stream.goose, src/serialize_int128.goose)
 
@@ -70,8 +72,8 @@ width depends on it (int_relative, string, wstring).
 | `ReadStream` | `serialize_read_stream_t` | `{ data: const u8[:], num_bits, bits_read, error: i32 }` |
 | `MeasureStream` | `serialize_measure_stream_t` | `{ bits_written, error: i32 }` |
 | `Uint128`, `Int128` | `serialize_uint128_t`, `serialize_int128_t` | `{ lo: u64, hi: u64 }` (c) |
-| `SERIALIZE_ERROR_NONE` .. `SERIALIZE_ERROR_FAILED` | the int error flag | the latched kinds, below |
-| `SERIALIZE_FORMAT_VERSION` | format version | `"1.1"` |
+| `SERIALIZE_ERROR_NONE` .. `SERIALIZE_ERROR_FAILED` | the int error flag and `serialize_refusal_t` | the latched kinds, below |
+| `SERIALIZE_FORMAT_VERSION` | format version | `"2.0"` |
 
 Counts (`bits`, `bytes`, `buffer_size`, `integer_bits`) are `i64`, Goose's
 length type. Every other parameter has serialize.c's width and signedness.
@@ -102,16 +104,28 @@ them to branch (for example to fill a derived field only after a read).
 
 | kind | value | when |
 |---|---|---|
-| `SERIALIZE_ERROR_NONE` | 0 | no error |
-| `SERIALIZE_ERROR_OVERFLOW` | 1 | a read past the end of the data; a write past the end of the buffer; a padded init whose destination is too small |
-| `SERIALIZE_ERROR_VALUE_OUT_OF_RANGE` | 2 | a value outside the range it is serialized with (read or write), and every string and wstring refusal |
-| `SERIALIZE_ERROR_ALIGN` | 3 | nonzero padding read by an align (or the align inside bytes and string) |
-| `SERIALIZE_ERROR_FAILED` | 4 | `serialize_fail` by the caller, or an object's `serialize` returning false |
+Kinds 1 to 8 are the refusal reasons, the closed list STANDARD.md defines
+under "Refusal reasons", in serialize.c's `serialize_refusal_t` order;
+`serialize_refusal_name(kind) -> const u8[:]` spells each exactly as the
+corpus does (`"past_end"`), `"none"` for NONE, `"failed"` for FAILED.
 
-serialize.c has one int flag; the kinds are a Goose addition that changes no
-accept/refuse decision. The first latched kind sticks; `serialize_fail` with a
-kind on a latched stream returns false and changes nothing. A latch persists
-until the stream is re-initialized (assigned a fresh init).
+| kind | value | name | when |
+|---|---|---|---|
+| `SERIALIZE_ERROR_NONE` | 0 | `none` | no error |
+| `SERIALIZE_ERROR_PAST_END` | 1 | `past_end` | a read past the end of the data; a write past the end of the buffer; a padded init whose destination is too small |
+| `SERIALIZE_ERROR_VALUE_OUT_OF_RANGE` | 2 | `value_out_of_range` | a value outside the range or domain it is serialized with (read or write): a ranged offset past its span, a string length above `buffer_size - 1`, a compressed integer above `max_integer_value`, an int_relative outside its domain or not above previous |
+| `SERIALIZE_ERROR_NONZERO_PADDING` | 3 | `nonzero_padding` | nonzero padding read by an align (or the align inside bytes and string), or by an end in the final byte |
+| `SERIALIZE_ERROR_TRAILING_DATA` | 4 | `trailing_data` | a whole byte or more left at an end |
+| `SERIALIZE_ERROR_NON_FINITE_FLOAT` | 5 | `non_finite_float` | a float or double read whose exponent field is all ones, a compressed_float decode that is not finite; a writer handed NaN or an infinity |
+| `SERIALIZE_ERROR_INVALID_UTF8` | 6 | `invalid_utf8` | a string payload that is not well-formed UTF-8 |
+| `SERIALIZE_ERROR_EMBEDDED_NUL` | 7 | `embedded_nul` | a zero byte in a string payload (scanned before the encoding) |
+| `SERIALIZE_ERROR_NON_CANONICAL` | 8 | `non_canonical` | the int_relative absolute tier carrying a difference a bounded tier carries |
+| `SERIALIZE_ERROR_FAILED` | 9 | `failed` | `serialize_fail` by the caller, or an object's `serialize` returning false: the caller's own, not a reason the library refuses for |
+
+The first latched kind sticks: the later refusals of a failed stream are
+echoes and keep it, and `serialize_fail` with a kind on a latched stream
+returns false and changes nothing. A latch persists until the stream is
+re-initialized (assigned a fresh init).
 
 ### The operations (one name, three overloads each)
 
@@ -136,11 +150,25 @@ until the stream is re-initialized (assigned a fresh init).
 | `serialize_compressed_float_precomputed(s, value: f32 / f32&, max_integer_value: u32, bits, delta: f32, min: f32)` | `*_compressed_float_precomputed` | compressed_float |
 | `serialize_bytes(s, data: const u8[:] / u8[:])` count = data.len | `*_bytes` | bytes |
 | `serialize_string(s, value: const u8[:] / T&, buffer_size)` | `*_string` | bytes |
-| `serialize_wstring(s, value: const u8[:] / T&, buffer_size)` | `*_wstring` | bytes |
+| `serialize_end(s)` | `*_end` | stream |
 | `serialize_object<S, T>(s: S&, object: T&)` | C++ `serialize_object` | object |
 
 Every operation returns `bool`: true on success, false on a refusal or on a
 latched stream. Measure overloads take the write overload's parameters.
+
+`serialize_end` is the end of the object (STANDARD.md, end). Its write and
+measure halves emit and cost nothing. Its read half consults the latch, then
+refuses a whole byte or more left as TRAILING_DATA, then reads the 0 to 7
+bits left in the final byte and refuses a set one as NONZERO_PADDING. A
+packet reader calls it after the top-level object, over a stream of exactly
+the bytes the writer reported:
+
+```goose
+var r = serialize_read_stream_init_padded(destination, packet);
+let ok = serialize(r, player) && serialize_end(r);
+```
+
+Format 2.0 removed wstring: text is UTF-8 and only UTF-8.
 
 `serialize_object` has no serialize.c function (C has no templates); it is
 the C++ library's macro, STANDARD.md object: it calls the caller's own
@@ -155,6 +183,8 @@ something already latched.
 |---|---|---|
 | `serialize_bits_required(min: u32, max: u32) -> i64` | `serialize_bits_required` | int |
 | `serialize_bits_required64(min: u64, max: u64) -> i64` | `serialize_bits_required64` | int |
+| `serialize_float_bits_are_finite(bits: u32) -> bool`, `serialize_double_bits_are_finite(bits: u64) -> bool` | the same | float |
+| `serialize_refusal_name(kind: i32) -> const u8[:]` | `serialize_refusal_name` | stream |
 | `serialize_uint128_make(hi, lo)`, `serialize_int128_make(hi, lo)` | the same | int128 |
 | `serialize_int128_from_int64(value: i64) -> Int128` | the same | int128 |
 | `serialize_uint128_equal`, `serialize_int128_equal`, `serialize_int128_compare -> i64` | the same | int128 |
@@ -282,13 +312,22 @@ Measured on hetzner2 and hulk, 2026-10-19, at the pin:
   ```
 
   and the f64 pair the same with 8 bytes (prefix 8). Never arithmetic. The
-  floats card proves bit identity on NaN payloads (signalling NaNs included),
-  subnormals, -0 and the infinities, in both builds.
+  floats card proves bit identity on subnormals and -0, in both builds.
+- **Finite values only** (STANDARD.md, format 2.0): the finite test is on
+  the BITS (`bits & 0x7F800000 != 0x7F800000`, `0x7FF0000000000000` for
+  double), so no conversion can quiet a signaling NaN before the test sees
+  it. A reader refuses a non-finite pattern as NON_FINITE_FLOAT before the
+  destination is written; a writer handed one latches NON_FINITE_FLOAT and
+  writes nothing (the write side's out-of-range rule, (e)).
 - **compressed_float** is f32 arithmetic throughout, in serialize.c's order
   (`serialize_compressed_float_params`, then the precomputed write and read):
   Goose computes `f32 op f32` in f32, and a float literal adapts to f32 beside
   an f32 operand, so the source reads as the C does. Every intermediate is
-  bound to an `f32` variable where C rounds to float.
+  bound to an `f32` variable where C rounds to float. The read refuses a
+  decode that is not finite (over `[3 * 2^103, FLT_MAX]` at res `2^104` the
+  top integer decodes to +inf) as NON_FINITE_FLOAT, destination untouched;
+  the WRITE path alone aborts on a declaration whose top decode,
+  `min + delta`, is not finite.
 
 ## (d) BYTES
 
@@ -313,26 +352,28 @@ Measured on hetzner2 and hulk, 2026-10-19, at the pin:
   `serialize_read_stream_init_padded(destination, data)`, which copies it once
   into a destination of at least `data.len + 8` bytes and zeroes the slack; a
   smaller destination copies nothing and the stream starts latched
-  (`SERIALIZE_ERROR_OVERFLOW`), serialize.c's rule.
+  (`SERIALIZE_ERROR_PAST_END`), serialize.c's rule.
 - `serialize_bytes` writes from a `const u8[:]` and reads into a caller's
   `u8[:]` whose length is the count.
-- **Strings are Goose's own: UTF-8 bytes** (STANDARD.md string and wstring:
-  "the destination is the language's own string type"). A write takes a
+- **Strings are Goose's own: UTF-8 bytes** (STANDARD.md string: real text
+  round trips byte for byte, no normalization, no BOM stripping, no
+  replacement). A write takes a
   `const u8[:]` (a literal, a `u8[>..]`, a `u8[..k]`); a read takes the caller's
   builder by reference, a growable `u8[>..]` or a limited `u8[..k]` (generic
   `T&`: Goose will not pass a `u8[..k]` as a `u8[>..]&`, measured), validates
   the payload IN PLACE in the stream's data first, and only then clears the
   builder and appends: a refused string read leaves the destination
-  untouched. `wstring` holds UTF-8 too: the writer converts to UTF-16 code
-  units (an astral code point becomes a surrogate pair) and the length is the
-  unit count; the reader validates the units and recombines pairs into UTF-8.
+  untouched. The claimed length is checked against the stream (PAST_END)
+  before anything is allocated or touched. The writer is handed well-formed
+  UTF-8 with no zero byte and aborts otherwise.
 
 ## (e) WRITER AND READER
 
 **The writer is STRICT.** For every value it emits exactly the bytes
-serialize.c v1.11.2 emits, byte for byte. Where serialize.c's write stream
-fails (a value outside [min,max], a full buffer) this port latches the same
-error (`SERIALIZE_ERROR_VALUE_OUT_OF_RANGE`, `SERIALIZE_ERROR_OVERFLOW`) and
+serialize.c v2.0.0 emits, byte for byte. Where serialize.c's write stream
+fails (a value outside [min,max], a non-finite float, a full buffer) this
+port latches the same error (`SERIALIZE_ERROR_VALUE_OUT_OF_RANGE`,
+`SERIALIZE_ERROR_NON_FINITE_FLOAT`, `SERIALIZE_ERROR_PAST_END`) and
 writes nothing for that call: every check covers the whole operation's width
 before any bit moves. API misuse serialize.c asserts on aborts naming the rule
 (a). (serialize.c checks neither of the latched cases in a release build, by
@@ -340,9 +381,9 @@ STANDARD.md's writes-trusted doctrine; Goose's checked slice stores would
 abort on a full buffer anyway, so the latch is the language's minimum and the
 card's rule.)
 
-**Reads are forgiving only where serialize.c's are and it is nearly free:**
-the trailing bits of the last byte are ignored, as STANDARD.md requires.
-Nothing else is forgiven.
+**Reads forgive nothing.** Format 2.0 gives every value exactly one
+encoding: the trailing bits of the last byte, and any byte after the object,
+are examined by `serialize_end`, which a packet reader must call.
 
 **Security trumps** (STANDARD.md, Reader Obligations, Implementation Law):
 
@@ -350,17 +391,21 @@ Nothing else is forgiven.
   (`bit_index + n > 8 * bytes`, written `n <= num_bits - bits_read` so it
   cannot overflow), a decoded value outside [min,max], an offset outside its
   range, nonzero align padding, an int_relative reconstruction outside
-  [0, 2^31 - 1] or not above previous, a string with a NUL or malformed
-  UTF-8 (overlongs, surrogates, above U+10FFFF, truncated), a wstring group
-  above 0xFFFF, a zero group, or an unpaired surrogate.
+  [0, 2^31 - 1] or not above previous (then, in the absolute tier, one no
+  more than 69914 above previous: NON_CANONICAL), a non-finite float, double
+  or compressed_float decode, a string with a NUL (scanned over the whole
+  payload first) or malformed UTF-8 (overlongs, surrogates, above U+10FFFF,
+  truncated), and at the end trailing data (first) or set padding. Each
+  latches its reason, (a).
 - A refused read leaves the caller's destination untouched: check, then
   assign. This port extends that to strings (validated before the builder is
   touched); a `serialize_bytes` read checks the bounds before copying, so a
   refused one is untouched too.
 - The stream is terminal after a refusal: the latch (a). Every read consults
   it first, zero-bit reads included (a degenerate range, an aligned align, a
-  zero-count bytes, an object). A refused read consumes nothing:
-  `bits_read` advances only on success (serialize.c instead poisons the
+  zero-count bytes, an object, an end). A refused read writes nothing and a
+  read on a failed stream consumes nothing; a padding refusal (align, end)
+  has consumed the padding it read (serialize.c instead poisons the
   cursor to `num_bits + 1`; there, as here, the counters of a failed stream
   are not data).
 - Hostile bytes never abort the program: an abort is API misuse, decided by
@@ -380,8 +425,8 @@ of which is the latch, the gate and one packer call. A family arm uses only:
 |---|---|---|
 | `s.error != SERIALIZE_ERROR_NONE` | all | latched |
 | `serialize_fail(s, kind) -> false` | all | latch kind (the first sticks) |
-| `serialize_read_check(r, bits) -> bool` | read | false when latched; latches Overflow past the end |
-| `serialize_write_check(w, bits) -> bool` | write | false when latched; latches Overflow when the buffer is full |
+| `serialize_read_check(r, bits) -> bool` | read | false when latched; latches PAST_END past the end |
+| `serialize_write_check(w, bits) -> bool` | write | false when latched; latches PAST_END when the buffer is full |
 | `serialize_measure_add(m, bits) -> bool` | measure | adds bits; false only when latched |
 | `serialize_packer_write(w, value: u64, bits)` | write | bits in [1,64], value < 2^bits, already checked |
 | `serialize_packer_read(r, bits) -> u64` | read | bits in [1,64], already checked |
@@ -397,14 +442,14 @@ then the bits; a read assigns its destination last.
 | file | holds | card |
 |---|---|---|
 | `src/serialize.goose` | the entry: imports every file; `SERIALIZE_FORMAT_VERSION` | serialize-goose-design (this card) |
-| `src/serialize_stream.goose` | the stream types, the latch, terminality, accounting, the gates, bits/bits64/bool/uint8..64/align/flush | serialize-goose-design (this card) |
+| `src/serialize_stream.goose` | the stream types, the latch and its reasons, terminality, accounting, the gates, bits/bits64/bool/uint8..64/align/end/flush | serialize-goose-design (this card) |
 | `src/serialize_bitpacker.goose` | the packer: `serialize_packer_write`, `_read`, `_flush`, `_write_bytes`, `_read_bytes` | serialize-goose-bitpacker |
 | `src/serialize_int.goose` | `serialize_bits_required`, `serialize_bits_required64`, `serialize_int`, `serialize_int64`, `serialize_int_relative` | serialize-goose-integers |
 | `src/serialize_int128.goose` | `Uint128`, `Int128` and their helpers, `serialize_uint128`, `serialize_int128` | serialize-goose-integers |
 | `src/serialize_float.goose` | `serialize_f32_bits` and its three siblings, `serialize_float`, `serialize_double` | serialize-goose-floats |
 | `src/serialize_fixed.goose` | `serialize_fixed32`, `serialize_fixed64`, `serialize_fixed128` | serialize-goose-floats |
 | `src/serialize_compressed_float.goose` | `serialize_compressed_float_params`, `serialize_compressed_float`, `serialize_compressed_float_precomputed` | serialize-goose-floats |
-| `src/serialize_bytes.goose` | `serialize_bytes`, `serialize_string`, `serialize_wstring` | serialize-goose-strings |
+| `src/serialize_bytes.goose` | `serialize_bytes`, `serialize_string` | serialize-goose-strings |
 | `src/serialize_object.goose` | `serialize_object` | serialize-goose-strings |
 
 Each family file exists now with its final signatures as stubs that abort
@@ -420,7 +465,7 @@ STANDARD.md section (and this page's section) that states it.
 Dependencies: every family's tests need the bitpacker at run time (the
 stream packs through it). int128 and fixed use `serialize_bits_required64`
 (int); fixed128 uses int128; compressed_float uses `serialize_bits_required`
-(int) and the float bits (float); string and wstring use `serialize_int` and
+(int) and the float bits (float); string uses the ranged length field and
 `serialize_bytes`.
 
 **A Goose fact every test author needs** (measured): the checker does not
@@ -469,6 +514,21 @@ checked puts each in its own `if` (test/smoke does).
 - Unit tests use no real time, no sockets, no network and no outside
   services; a test clock, where one is ever needed, is an argument starting at
   1000.0.
-- Conformance: a later card reads `conformance/*.txt` from the staged
-  directory and checks every record, byte for byte and refusal for refusal
-  (STANDARD.md, The vector format).
+- Conformance: `test/conformance` reads `conformance/*.txt` from the staged
+  directory and checks every record, byte for byte and refusal for refusal,
+  each refusal held to the reason its record states, every `writer_input`
+  written and held to the record's bytes, every name unique (STANDARD.md, The
+  vector format, What a runner checks). A failing vector is printed and
+  collected rather than aborting the run; a malformed one (unknown operation,
+  line or reason) aborts.
+- A compiler warning anywhere in a test's program fails that test: zero
+  warnings.
+- `make witnesses` (tools/witnesses.sh): each row deletes one rule in a
+  scratch copy of src/ and the whole suite must go red.
+- `make controls` (tools/controls.sh): the C++ reference's negative controls,
+  translated line for line. Each deletes one refusal rule in a scratch copy
+  of src/ and the REAL corpus, through the runner built over that copy, must
+  fail EXACTLY the vectors `conformance-controls/<rule>.expected` names
+  (`conf_control_main`); the unknown-operation control must be rejected.
+  A needle that does not occur exactly once fails the control, and a
+  vendored `.expected` with no row fails the run.

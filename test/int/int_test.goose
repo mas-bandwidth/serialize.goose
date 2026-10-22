@@ -21,7 +21,7 @@ fn int_parse_u64(s: const u8[:]) -> u64 {
     for i in s.len {
         let c = s[i];
         assert(c >= '0' && c <= '9');
-        v = v * 10 + (c - '0') as u64;
+        v = v * 10 + (c - '0');
     }
     return v;
 }
@@ -83,7 +83,7 @@ fn int_parse_number(s: const u8[:]) -> IntParsed {
         i += 2;
         while i < s.len {
             let d = int_hex_nibble(s[i]);
-            v = serialize_u128_add(int_u128_shl(v, 4), Uint128 { lo: d as u64, hi: 0 });
+            v = serialize_u128_add(int_u128_shl(v, 4), Uint128 { lo: d, hi: 0 });
             i += 1;
         }
     } else {
@@ -110,14 +110,17 @@ struct IntRecord {
     min: Int128,
     max: Int128,
     refused: bool,
+    reason: i32,
     expect: Uint128,
     consumed: i64,
     canonical: bool,
     wire: u8[>..],
 }
 
-fn int_check_terminal(r: ReadStream&) {
-    assert(serialize_error(r) != SERIALIZE_ERROR_NONE);
+// A refused record's stream holds the reason the record states, the first
+// refusal's (STANDARD.md, Refusal reasons), and is terminal.
+fn int_check_terminal(r: ReadStream&, reason: i32) {
+    assert(serialize_error(r) == reason);
     let before = serialize_bits_processed(r);
     var probe = true;
     assert(!serialize_bool(r, probe));
@@ -176,10 +179,10 @@ fn int_run_record(rec: IntRecord&) -> i64 {
         if rec.refused {
             assert(!ok);
             assert(got32 == 0xDEADBEEF && got64 == 0xDEADBEEFCAFEBABE);
-            int_check_terminal(r);
+            int_check_terminal(r, rec.reason);
         } else {
             assert(ok);
-            let v: u64 = if rec.bits <= 32 { got32 as u64 } else { got64 };
+            let v: u64 = if rec.bits <= 32 { got32 } else { got64 };
             assert(rec.expect.hi == 0 && v == rec.expect.lo);
             assert(serialize_bits_processed(r) == rec.consumed);
             if rec.canonical { int_check_canonical(rec); }
@@ -189,7 +192,7 @@ fn int_run_record(rec: IntRecord&) -> i64 {
         let ok = serialize_bool(r, got);
         if rec.refused {
             assert(!ok && got);
-            int_check_terminal(r);
+            int_check_terminal(r, rec.reason);
         } else {
             assert(ok && got == (rec.expect.lo != 0));
             assert(serialize_bits_processed(r) == rec.consumed);
@@ -200,7 +203,7 @@ fn int_run_record(rec: IntRecord&) -> i64 {
         let ok = serialize_int(r, got, rec.min.lo as! i32, rec.max.lo as! i32);
         if rec.refused {
             assert(!ok && got == 0x1234567);
-            int_check_terminal(r);
+            int_check_terminal(r, rec.reason);
         } else {
             assert(ok && got == (rec.expect.lo as! i32));
             assert(serialize_bits_processed(r) == rec.consumed);
@@ -211,7 +214,7 @@ fn int_run_record(rec: IntRecord&) -> i64 {
         let ok = serialize_int64(r, got, rec.min.lo as! i64, rec.max.lo as! i64);
         if rec.refused {
             assert(!ok && got == 0x0123456789ABCDEF);
-            int_check_terminal(r);
+            int_check_terminal(r, rec.reason);
         } else {
             assert(ok && got == (rec.expect.lo as! i64));
             assert(serialize_bits_processed(r) == rec.consumed);
@@ -223,7 +226,7 @@ fn int_run_record(rec: IntRecord&) -> i64 {
         if rec.refused {
             assert(!ok);
             assert(serialize_int128_equal(got, Int128 { lo: 0x0123456789ABCDEF, hi: 0xFEDCBA9876543210 }));
-            int_check_terminal(r);
+            int_check_terminal(r, rec.reason);
         } else {
             let want = Int128 { lo: rec.expect.lo, hi: rec.expect.hi };
             assert(ok && serialize_int128_equal(got, want));
@@ -236,7 +239,7 @@ fn int_run_record(rec: IntRecord&) -> i64 {
         if rec.refused {
             assert(!ok);
             assert(serialize_uint128_equal(got, Uint128 { lo: 0x0123456789ABCDEF, hi: 0xFEDCBA9876543210 }));
-            int_check_terminal(r);
+            int_check_terminal(r, rec.reason);
         } else {
             assert(ok && serialize_uint128_equal(got, Uint128 { lo: rec.expect.lo, hi: rec.expect.hi }));
             assert(serialize_bits_processed(r) == rec.consumed);
@@ -247,7 +250,7 @@ fn int_run_record(rec: IntRecord&) -> i64 {
         let ok = serialize_int_relative(r, rec.previous, got);
         if rec.refused {
             assert(!ok && got == 0x1234567);
-            int_check_terminal(r);
+            int_check_terminal(r, rec.reason);
         } else {
             assert(ok && got == (rec.expect.lo as! i32));
             assert(serialize_bits_processed(r) == rec.consumed);
@@ -272,6 +275,16 @@ fn int_count_operations(content: const u8[:]) -> i64 {
     return count;
 }
 
+// The reason a refused record states, from the closed list (STANDARD.md,
+// Refusal reasons); a missing or unknown reason is a malformed vector.
+fn int_reason(name: const u8[:]) -> i32 {
+    for k in 8 {
+        let kind = (k + 1) as! i32;
+        if int_equals(name, serialize_refusal_name(kind)) { return kind; }
+    }
+    abort("conformance: refused record states no known reason");
+}
+
 fn int_run_file(filename: const u8[:]) -> i64 {
     var content: u8[>..] = [];
     assert(read_file(filename, content));
@@ -279,7 +292,7 @@ fn int_run_file(filename: const u8[:]) -> i64 {
     var rec = IntRecord {
         has_op: false, kind: 0, bits: 0, previous: 0,
         min: Int128 { lo: 0, hi: 0 }, max: Int128 { lo: 0, hi: 0 },
-        refused: false, expect: Uint128 { lo: 0, hi: 0 }, consumed: 0,
+        refused: false, reason: SERIALIZE_ERROR_NONE, expect: Uint128 { lo: 0, hi: 0 }, consumed: 0,
         canonical: false, wire: [],
     };
     var count = 0;
@@ -297,6 +310,7 @@ fn int_run_file(filename: const u8[:]) -> i64 {
                 rec.min = Int128 { lo: 0, hi: 0 };
                 rec.max = Int128 { lo: 0, hi: 0 };
                 rec.refused = false;
+                rec.reason = SERIALIZE_ERROR_NONE;
                 rec.expect = Uint128 { lo: 0, hi: 0 };
                 rec.consumed = 0;
                 rec.canonical = false;
@@ -327,8 +341,9 @@ fn int_run_file(filename: const u8[:]) -> i64 {
                     rec.wire.clear();
                 } else if int_starts_with(line, "bytes ") {
                     int_parse_hex_bytes(line[6..], rec.wire);
-                } else if int_equals(line, "expect refused") {
+                } else if int_starts_with(line, "expect refused ") {
                     rec.refused = true;
+                    rec.reason = int_reason(line[15..]);
                 } else if int_starts_with(line, "expect value = ") {
                     let val = line[15..];
                     if int_equals(val, "true") {
@@ -466,13 +481,13 @@ fn TestSerializeInt() {
     let n_int128 = int_run_file("int128.txt");
     let n_uint128 = int_run_file("uint128.txt");
     let n_relative = int_run_file("int_relative.txt");
-    assert(n_bits == 20);
+    assert(n_bits == 26);
     assert(n_bool == 5);
     assert(n_int == 26);
-    assert(n_int64 == 21);
-    assert(n_int128 == 19);
-    assert(n_uint128 == 7);
-    assert(n_relative == 46);
+    assert(n_int64 == 27);
+    assert(n_int128 == 25);
+    assert(n_uint128 == 13);
+    assert(n_relative == 49);
 
     int_bits_required_edges();
     int64_full_range_edges();

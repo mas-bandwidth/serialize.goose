@@ -6,12 +6,39 @@
 
 import .serialize_bitpacker;
 
-// The latched kinds (DESIGN.md (a), errors). The first one latched sticks.
+// The latched kinds (DESIGN.md (a), errors). The first one latched sticks:
+// the later refusals of a failed stream are echoes and keep it. Kinds 1 to 8
+// are the refusal reasons, the closed list STANDARD.md defines under "Refusal
+// reasons", in the C++ library's serialize::Refusal order; serialize_refusal_name
+// spells each one as the corpus does. FAILED is the caller's own serialize_fail
+// (or an object returning false), which is not a reason the library refuses for.
 let SERIALIZE_ERROR_NONE = 0;
-let SERIALIZE_ERROR_OVERFLOW = 1;           // past the end of the data or the buffer
-let SERIALIZE_ERROR_VALUE_OUT_OF_RANGE = 2; // a value outside its range, every string refusal
-let SERIALIZE_ERROR_ALIGN = 3;              // nonzero align padding
-let SERIALIZE_ERROR_FAILED = 4;             // serialize_fail by the caller, an object returning false
+let SERIALIZE_ERROR_PAST_END = 1;           // past_end: past the end of the data or the buffer
+let SERIALIZE_ERROR_VALUE_OUT_OF_RANGE = 2; // value_out_of_range: outside a range or domain
+let SERIALIZE_ERROR_NONZERO_PADDING = 3;    // nonzero_padding: align padding, or the end's final byte
+let SERIALIZE_ERROR_TRAILING_DATA = 4;      // trailing_data: a whole byte or more after the end
+let SERIALIZE_ERROR_NON_FINITE_FLOAT = 5;   // non_finite_float: NaN or an infinity
+let SERIALIZE_ERROR_INVALID_UTF8 = 6;       // invalid_utf8: a string payload that is not UTF-8
+let SERIALIZE_ERROR_EMBEDDED_NUL = 7;       // embedded_nul: a zero byte in a string payload
+let SERIALIZE_ERROR_NON_CANONICAL = 8;      // non_canonical: an encoding no writer produces
+let SERIALIZE_ERROR_FAILED = 9;             // serialize_fail by the caller, an object returning false
+
+// The family-wide name of a latched kind, exactly as STANDARD.md and the
+// corpus spell it ("past_end"); "none" for NONE and "failed" for the caller's
+// FAILED. Anything else is "unknown".
+fn serialize_refusal_name(kind: i32) -> const u8[:] {
+    if kind == SERIALIZE_ERROR_NONE { return "none"; }
+    if kind == SERIALIZE_ERROR_PAST_END { return "past_end"; }
+    if kind == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE { return "value_out_of_range"; }
+    if kind == SERIALIZE_ERROR_NONZERO_PADDING { return "nonzero_padding"; }
+    if kind == SERIALIZE_ERROR_TRAILING_DATA { return "trailing_data"; }
+    if kind == SERIALIZE_ERROR_NON_FINITE_FLOAT { return "non_finite_float"; }
+    if kind == SERIALIZE_ERROR_INVALID_UTF8 { return "invalid_utf8"; }
+    if kind == SERIALIZE_ERROR_EMBEDDED_NUL { return "embedded_nul"; }
+    if kind == SERIALIZE_ERROR_NON_CANONICAL { return "non_canonical"; }
+    if kind == SERIALIZE_ERROR_FAILED { return "failed"; }
+    return "unknown";
+}
 
 // A write stream over the caller's buffer, whose length is a multiple of 8:
 // the packer commits whole 64-bit words (STANDARD.md, General Conventions).
@@ -63,7 +90,7 @@ fn serialize_read_stream_init(data: const u8[:], bytes: i64) -> ReadStream {
 // that cannot hold data.len + 8 copies nothing and the stream starts latched.
 fn serialize_read_stream_init_padded(destination: u8[:], data: const u8[:]) -> ReadStream {
     if destination.len - 8 < data.len {
-        return ReadStream { data: destination[0..0], num_bits: 0, bits_read: 0, error: SERIALIZE_ERROR_OVERFLOW };
+        return ReadStream { data: destination[0..0], num_bits: 0, bits_read: 0, error: SERIALIZE_ERROR_PAST_END };
     }
     for i in data.len { destination[i] = data[i]; }
     for i in 8 { destination[data.len + i] = 0; }
@@ -111,19 +138,19 @@ fn serialize_is_reading(s: MeasureStream&) -> bool { return false; }
 // ---- the gates every family arm calls first (DESIGN.md (e)) ---------------
 
 // Every read consults the latch first, zero-bit reads included; a read past
-// the end latches Overflow (STANDARD.md, Reader Obligations: the test is
+// the end latches PAST_END (STANDARD.md, Reader Obligations: the test is
 // bit_index + n > 8 * bytes, written so it cannot overflow).
 fn serialize_read_check(s: ReadStream&, bits: i64) -> bool {
     guard s.error == SERIALIZE_ERROR_NONE else { return false; }
-    guard bits <= s.num_bits - s.bits_read else { return serialize_fail(s, SERIALIZE_ERROR_OVERFLOW); }
+    guard bits <= s.num_bits - s.bits_read else { return serialize_fail(s, SERIALIZE_ERROR_PAST_END); }
     return true;
 }
 
 // A latched write stream writes nothing; a write past the end of the buffer
-// latches Overflow and writes nothing (DESIGN.md (e)).
+// latches PAST_END and writes nothing (DESIGN.md (e)).
 fn serialize_write_check(s: WriteStream&, bits: i64) -> bool {
     guard s.error == SERIALIZE_ERROR_NONE else { return false; }
-    guard bits <= s.num_bits - s.bits_written else { return serialize_fail(s, SERIALIZE_ERROR_OVERFLOW); }
+    guard bits <= s.num_bits - s.bits_written else { return serialize_fail(s, SERIALIZE_ERROR_PAST_END); }
     return true;
 }
 
@@ -260,7 +287,7 @@ fn serialize_uint64(s: ReadStream&, value: u64&) -> bool {
 fn serialize_uint64(s: MeasureStream&, value: u64) -> bool { return serialize_measure_add(s, 64); }
 
 // align: zero bits to the next byte boundary, nothing when aligned; the
-// reader refuses nonzero padding with Align, and a latched stream refuses
+// reader refuses nonzero padding as NONZERO_PADDING, and a latched stream refuses
 // even an aligned align (STANDARD.md, align; Reader Obligations). The measure
 // charges the worst case, 7 bits (STANDARD.md, The Measure Stream).
 fn serialize_align(s: WriteStream&) -> bool {
@@ -276,7 +303,29 @@ fn serialize_align(s: ReadStream&) -> bool {
     let n = serialize_align_bits(s);
     if n == 0 { return true; }
     guard serialize_read_check(s, n) else { return false; }
-    guard serialize_packer_read(s, n) == 0 else { return serialize_fail(s, SERIALIZE_ERROR_ALIGN); }
+    guard serialize_packer_read(s, n) == 0 else { return serialize_fail(s, SERIALIZE_ERROR_NONZERO_PADDING); }
     return true;
 }
 fn serialize_align(s: MeasureStream&) -> bool { return serialize_measure_add(s, 7); }
+
+// end: the end of the object (STANDARD.md, end). The write and measure halves
+// emit nothing and cost nothing, and refuse only on a latched stream. The read
+// half consults the latch first, like every read; then refuses a whole byte or
+// more left in the stream as TRAILING_DATA, even a zero byte; then reads the 0
+// to 7 bits left in the final byte and refuses a set one as NONZERO_PADDING.
+// Trailing data is checked first, so a whole byte left over is TRAILING_DATA
+// whatever its padding holds. An accepted end leaves the cursor at the end of
+// the stream. A packet reader calls it after the top-level object.
+fn serialize_end(s: WriteStream&) -> bool { return s.error == SERIALIZE_ERROR_NONE; }
+fn serialize_end(s: ReadStream&) -> bool {
+    guard s.error == SERIALIZE_ERROR_NONE else { return false; }
+    let remaining = s.num_bits - s.bits_read;
+    guard remaining < 8 else { return serialize_fail(s, SERIALIZE_ERROR_TRAILING_DATA); }
+    // Fewer than 8 bits remain here, so this is all of them: the final
+    // byte's padding.
+    let padding_bits = remaining % 8;
+    if padding_bits == 0 { return true; }
+    guard serialize_packer_read(s, padding_bits) == 0 else { return serialize_fail(s, SERIALIZE_ERROR_NONZERO_PADDING); }
+    return true;
+}
+fn serialize_end(s: MeasureStream&) -> bool { return serialize_measure_add(s, 0); }

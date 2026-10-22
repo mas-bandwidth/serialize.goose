@@ -1,6 +1,8 @@
 // serialize_compressed_float.goose -- quantized floats (STANDARD.md,
 // compressed_float; DESIGN.md (a), (c)). The arithmetic is f32 throughout, in
-// serialize.c's order; a non-finite value on write aborts.
+// serialize.c's order; a non-finite value on write aborts, and a decode that
+// is not finite is refused as NON_FINITE_FLOAT (STANDARD.md, compressed_float,
+// The decode must be finite).
 
 import .serialize_stream;
 import .serialize_float;
@@ -36,7 +38,7 @@ fn serialize_compressed_float_params(min: f32, max: f32, res: f32) -> u32, i64, 
         values = 4294967040.0;
     }
     var max_integer_value: u32 = values as! u32;
-    if (max_integer_value as f32) < values {
+    if max_integer_value < values {
         max_integer_value += 1;
     }
     return max_integer_value, cf_bits_required(max_integer_value), delta;
@@ -61,6 +63,10 @@ fn serialize_compressed_float_precomputed(s: WriteStream&, value: f32, max_integ
     if bits != cf_bits_required(max_integer_value) { abort("serialize: compressed float bits must match max_integer_value"); }
     if !(delta > 0.0) || !cf_finite(delta) { abort("serialize: compressed float delta must be positive and finite"); }
     if !cf_finite(value) { abort("serialize: compressed float value must be finite"); }
+    // The declaration's top decode, min + delta rounded once, must be finite
+    // (STANDARD.md, compressed_float): checked on the write path only.
+    let top: f32 = min + delta;
+    if !cf_finite(top) { abort("serialize: compressed float declaration must decode its top to a finite value"); }
 
     var normalized: f32 = (value - min) / delta;
     if !(normalized >= 0.0) {
@@ -69,7 +75,7 @@ fn serialize_compressed_float_precomputed(s: WriteStream&, value: f32, max_integ
         normalized = 1.0;
     }
 
-    let scaled: f32 = normalized * (max_integer_value as f32);
+    let scaled: f32 = normalized * max_integer_value;
     var integer_value: u32 = (scaled + 0.5) as! u32;
     if integer_value > max_integer_value {
         integer_value = max_integer_value;
@@ -88,9 +94,16 @@ fn serialize_compressed_float_precomputed(s: ReadStream&, value: f32&, max_integ
         return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
     }
 
-    let normalized: f32 = (integer_value as f32) / (max_integer_value as f32);
+    let normalized: f32 = (integer_value as f32) / max_integer_value;
     let scaled: f32 = normalized * delta;
-    value = scaled + min;
+    let decoded: f32 = scaled + min;
+    // Every operand is finite and still the add can round past FLT_MAX: the
+    // decode is refused, the destination untouched (STANDARD.md,
+    // compressed_float, The decode must be finite).
+    guard serialize_float_bits_are_finite(serialize_f32_bits(decoded)) else {
+        return serialize_fail(s, SERIALIZE_ERROR_NON_FINITE_FLOAT);
+    }
+    value = decoded;
     return true;
 }
 
