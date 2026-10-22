@@ -11,7 +11,7 @@ import .serialize;
 import .conformance_test;
 
 fn golden_steps(steps: Step[64]&) -> i64 {
-    // The 27 step spellings of message.txt's message-golden-whole, in order.
+    // The 28 step spellings of message.txt's message-golden-whole, in order.
     assert(conf_step_from_words(steps[0], "bits 4"));
     assert(conf_step_from_words(steps[1], "bits 11"));
     assert(conf_step_from_words(steps[2], "bits 24"));
@@ -70,7 +70,7 @@ fn golden_read(wire: const u8[:], steps: Step[64]&) -> bool {
     for i in wire.len { padded[i] = wire[i]; }
     var r = serialize_read_stream_init(padded, wire.len);
     var failed: i64 = -1;
-    return conf_run_steps(r, steps, 0, 28, false, false, failed);
+    return conf_run_steps(r, steps, 0, 28, false, SAB_NONE, failed);
 }
 
 fn golden_same(a: Step[64], b: Step[64]) -> bool {

@@ -330,12 +330,15 @@ fn conf_step_from_words(st: Step&, text: const u8[:]) -> bool {
 
 // ---- the reader -----------------------------------------------------------
 
-// The sabotage switch: when on, the align reader consumes the padding without
-// checking it is zero, which is exactly one refusal rule deleted. It is an
-// argument the runner passes, not a source edit (STANDARD.md, A gate nobody
-// has seen go red).
-fn conf_read_align(s: ReadStream&, sabotage: bool) -> bool {
-    if !sabotage { return serialize_align(s); }
+// The sabotage switch: an argument the runner passes, never a source edit
+// (STANDARD.md, A gate nobody has seen go red). Each mode deletes exactly one
+// refusal rule from the reader the runner drives.
+let SAB_NONE = 0;
+let SAB_ALIGN = 1;      // align consumes its padding without checking it is zero
+let SAB_INT_RANGE = 2;  // int accepts an offset past max - min (STANDARD.md, int)
+
+fn conf_read_align(s: ReadStream&, sabotage: i64) -> bool {
+    if sabotage != SAB_ALIGN { return serialize_align(s); }
     guard serialize_error(s) == SERIALIZE_ERROR_NONE else { return false; }
     let n = serialize_align_bits(s);
     if n == 0 { return true; }
@@ -384,7 +387,18 @@ fn conf_units_to_utf8(st: Step&, out: u8[1024]&) -> i64 {
     return len;
 }
 
-fn conf_read_step(s: ReadStream&, st: Step&, check: bool, sabotage: bool) -> bool {
+// SAB_INT_RANGE's reader: serialize_int with the range refusal deleted and
+// nothing else changed (the width rule and the past-end refusal still hold).
+fn conf_read_int_unchecked(s: ReadStream&, value: i32&, min: i32, max: i32) -> bool {
+    let bits = serialize_bits_required(min as! u32, max as! u32);
+    if bits == 0 { value = min; return serialize_error(s) == SERIALIZE_ERROR_NONE; }
+    var offset: u32 = 0;
+    guard serialize_bits(s, offset, bits) else { return false; }
+    value = ((min as! u32) + offset) as! i32;
+    return true;
+}
+
+fn conf_read_step(s: ReadStream&, st: Step&, check: bool, sabotage: i64) -> bool {
     if st.kind == K_BITS {
         if st.width <= 32 {
             var v: u32 = 0xDEADBEEF;
@@ -412,7 +426,11 @@ fn conf_read_step(s: ReadStream&, st: Step&, check: bool, sabotage: bool) -> boo
     if st.kind == K_ALIGN { return conf_read_align(s, sabotage); }
     if st.kind == K_INT {
         var v: i32 = 0x1234567;
-        guard serialize_int(s, v, st.min.lo as! i32, st.max.lo as! i32) else { return false; }
+        if sabotage == SAB_INT_RANGE {
+            guard conf_read_int_unchecked(s, v, st.min.lo as! i32, st.max.lo as! i32) else { return false; }
+        } else {
+            guard serialize_int(s, v, st.min.lo as! i32, st.max.lo as! i32) else { return false; }
+        }
         st.got = Int128 { lo: v as! u64, hi: if v < 0 { 0xffffffffffffffff } else { 0 } };
         return !check || conf_same(st.want, st.got);
     }
@@ -599,13 +617,13 @@ fn conf_measure_step(s: MeasureStream&, st: Step&) -> bool {
 }
 
 // The overload set the generic walk below resolves on the stream type.
-fn conf_run_step(s: ReadStream&, st: Step&, check: bool, sabotage: bool) -> bool {
+fn conf_run_step(s: ReadStream&, st: Step&, check: bool, sabotage: i64) -> bool {
     return conf_read_step(s, st, check, sabotage);
 }
-fn conf_run_step(s: WriteStream&, st: Step&, check: bool, sabotage: bool) -> bool {
+fn conf_run_step(s: WriteStream&, st: Step&, check: bool, sabotage: i64) -> bool {
     return conf_write_step(s, st);
 }
-fn conf_run_step(s: MeasureStream&, st: Step&, check: bool, sabotage: bool) -> bool {
+fn conf_run_step(s: MeasureStream&, st: Step&, check: bool, sabotage: i64) -> bool {
     return conf_measure_step(s, st);
 }
 
@@ -614,7 +632,7 @@ fn conf_run_step(s: MeasureStream&, st: Step&, check: bool, sabotage: bool) -> b
 // and every later step of a refused sequence must refuse too (STANDARD.md,
 // Reader Obligations).
 recursive fn conf_run_steps<S>(s: S&, steps: Step[64]&, start: i64, end: i64,
-                               check: bool, sabotage: bool, failed: i64&) -> bool {
+                               check: bool, sabotage: i64, failed: i64&) -> bool {
     var i = start;
     while i < end {
         if steps[i].kind == K_OBJECT {
@@ -887,7 +905,7 @@ fn conf_parse_line(rec: Rec&, line: const u8[:]) {
     } else if conf_starts(line, "consumed ") {
         rec.consumed = conf_parse_dec(line[9..]);
     } else if conf_starts(line, "measure_at_least ") {
-        rec.measure_at_least = conf_parse_dec(line[18..]);
+        rec.measure_at_least = conf_parse_dec(line[17..]);
     } else if conf_equals(line, "writer canonical") {
         rec.canonical = true;
     } else {
@@ -905,7 +923,7 @@ fn conf_check_terminal(s: ReadStream&) {
     assert(serialize_error(s) != SERIALIZE_ERROR_NONE);
 }
 
-fn conf_run_record(rec: Rec&, sabotage: bool, sabotage_hits: i64&) -> i64 {
+fn conf_run_record(rec: Rec&, sabotage: i64, sabotage_hits: i64&) -> i64 {
     if !rec.has_op { return 0; }
     if rec.bad { abort("conformance: no runner for this operation, parameter, or fixed declaration"); }
     if !conf_build_steps(rec) { abort("conformance: no runner for this vector"); }
@@ -927,7 +945,7 @@ fn conf_run_record(rec: Rec&, sabotage: bool, sabotage_hits: i64&) -> i64 {
     let ok = conf_run_steps(r, rec.steps, 0, rec.step_count, !rec.refused, sabotage, failed);
 
     if rec.refused {
-        if sabotage {
+        if sabotage != SAB_NONE {
             if ok { sabotage_hits += 1; return 1; }
             return 1;
         }
@@ -981,7 +999,7 @@ fn conf_run_record(rec: Rec&, sabotage: bool, sabotage_hits: i64&) -> i64 {
 
 // Reads one vector file, running every record; returns the count. A blank line
 // separates records (STANDARD.md, The vector format).
-fn conf_run_file(filename: const u8[:], sabotage: bool, sabotage_hits: i64&) -> i64 {
+fn conf_run_file(filename: const u8[:], sabotage: i64, sabotage_hits: i64&) -> i64 {
     var content: u8[>..] = [];
     assert(read_file(filename, content));
     var rec = Rec {
@@ -1021,7 +1039,7 @@ fn conf_is_txt(name: const u8[:]) -> bool {
 
 // Discovers every *.txt in the staged corpus directory; never a fixed list,
 // and an empty directory fails (STANDARD.md, The vector format; DESIGN.md (g)).
-fn conf_run_corpus(sabotage: bool, sabotage_hits: i64&) -> i64 {
+fn conf_run_corpus(sabotage: i64, sabotage_hits: i64&) -> i64 {
     var names: u8[>..] = [];
     assert(list_dir(".", names));
     var total: i64 = 0;
@@ -1065,9 +1083,9 @@ fn conf_file_is_supported(filename: const u8[:]) -> bool {
 
 fn conf_unknown_operation_control() {
     let body: u8[>..] = "operation no_such_operation\nname control\nbytes 00\nexpect value = 0\nconsumed 0\n";
-    assert(write_file("conformance_scratch.txt", body));
-    assert(!conf_file_is_supported("conformance_scratch.txt"));
-    assert(delete_file("conformance_scratch.txt"));
+    assert(write_file("conformance_scratch.vector", body));
+    assert(!conf_file_is_supported("conformance_scratch.vector"));
+    assert(delete_file("conformance_scratch.vector"));
 }
 
 // goose: --debug
@@ -1075,7 +1093,7 @@ fn TestConformanceCorpus() {
     conf_unknown_operation_control();
 
     var hits: i64 = 0;
-    let total = conf_run_corpus(false, hits);
+    let total = conf_run_corpus(SAB_NONE, hits);
     assert(total > 0);
 
     // The sabotaged reader: the align rule switched off through an argument,
@@ -1084,7 +1102,47 @@ fn TestConformanceCorpus() {
     // accepted record still passes (STANDARD.md, A gate nobody has seen go
     // red).
     var sabotage_hits: i64 = 0;
-    let n = conf_run_file("align.txt", true, sabotage_hits);
+    let n = conf_run_file("align.txt", SAB_ALIGN, sabotage_hits);
     assert(n == 10);
     assert(sabotage_hits == 5);
+
+    // The second sabotaged reader: int's range refusal deleted. It must go
+    // red on exactly int.txt's six out-of-range refusals; the two past-end
+    // refusals still refuse and every accepted record still passes.
+    var int_hits: i64 = 0;
+    let ni = conf_run_file("int.txt", SAB_INT_RANGE, int_hits);
+    assert(ni == 26);
+    assert(int_hits == 6);
+}
+
+// The unknown-operation control through the runner itself: a scratch vector
+// file whose operation has no runner is REJECTED by conf_run_file, never
+// skipped (STANDARD.md, A gate nobody has seen go red). Its extension is not
+// .txt, so a corpus run staged beside it never discovers it.
+// want-abort: conformance: no runner for this operation, parameter, or fixed declaration
+fn TestConformanceUnknownOperationRejected() {
+    let body: u8[>..] = "operation no_such_operation\nname control\nbytes 00\nexpect value = 0\nconsumed 0\n";
+    assert(write_file("unknown_operation.vector", body));
+    var hits: i64 = 0;
+    conf_run_file("unknown_operation.vector", SAB_NONE, hits);
+}
+
+// The parser reads every header field whole: `measure_at_least 122` is 122
+// (a slice one past the prefix once read it as 22, weakening every floor).
+fn TestConformanceParsesMeasureFloor() {
+    var rec = Rec {
+        op: 0, has_op: false, preceding: 0, width: 0, count: 0, buffer_size: 0,
+        integer_bits: 0, fraction_bits: 0, previous: 0,
+        min: Int128 { lo: 0, hi: 0 }, max: Int128 { lo: 0, hi: 0 },
+        fmin: 0.0, fmax: 0.0, fres: 0.0, refused: false, canonical: false,
+        consumed: 0, measure_at_least: 0, has_expect: false,
+        expect_text: [0; 1024], expect_len: 0, bad: false,
+        wire: [0; 1024], wire_len: 0,
+        steps: [conf_empty_step(); 64], step_count: 0,
+    };
+    conf_parse_line(rec, "measure_at_least 122");
+    assert(rec.measure_at_least == 122);
+    conf_parse_line(rec, "consumed 895");
+    assert(rec.consumed == 895);
+    assert(!rec.bad);
 }
