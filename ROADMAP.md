@@ -4,7 +4,7 @@
 
 ## The Goose port of serialize
 
-The Goose port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The work is on the integration branch sprint/serialize-goose and is not yet on main.
+The Goose port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The families and the conformance runner are on main (PR #2, PR #3, 2026-10-22).
 
 <!-- nova-work:port:start -->
 
@@ -17,11 +17,12 @@ The Goose port of serialize, the open-source bitpacking serializer: the same wir
 | Ranged integers, int64, int128, uint128 and relative ints | ✅ |
 | float, double, fixed and compressed floats | ✅ |
 | Bytes, strings, wide strings, align and objects | ✅ |
-| Whole conformance corpus, byte for byte with serialize.c | ❌ |
+| Whole conformance corpus, byte for byte with serialize.c | ✅ |
+| Reversed witnesses: each deleted refusal rule turns the suite red | ✅ |
 | Differential fuzzing against serialize.c | ❌ |
 | Benchmark against serialize.c, C++ serialize and serialize.rs | ❌ |
 | Goose vs C++ vs Rust (and Lobster) benchmark report | ❌ |
-| complete | 63% |
+| complete | 75% |
 
 [Source data](docs/roadmap.sexp)
 
