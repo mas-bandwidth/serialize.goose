@@ -16,7 +16,7 @@ set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 GOOSE=${GOOSE:-$root/dist/goose-v2026.2-linux-x64/goose}
 export GOOSE
-JOBS=${JOBS:-8}
+JOBS=${JOBS:-4}  # shared benches: rocketnet has first claim
 
 # file<TAB>line<TAB>from<TAB>to<TAB>rule (STANDARD.md section)
 table() {
