@@ -17,7 +17,7 @@
  :nodes
  ((:id "serialize-goose/roadmap" :type :work-set :children ("port"))
   (:id "port" :type :roadmap :title "The Goose port of serialize"
-   :text ("The Goose port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The work is on the integration branch sprint/serialize-goose and is not yet on main.")
+   :text ("The Goose port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The families and the conformance runner are on main (PR #2, PR #3, 2026-10-22).")
    :rows
    (("design" "Design, family stubs and test runner")
     ("standard" "STANDARD.md matches serialize v1.17.0")
@@ -27,6 +27,7 @@
     ("floats" "float, double, fixed and compressed floats")
     ("strings" "Bytes, strings, wide strings, align and objects")
     ("conformance" "Whole conformance corpus, byte for byte with serialize.c")
+    ("witnesses" "Reversed witnesses: each deleted refusal rule turns the suite red")
     ("fuzz" "Differential fuzzing against serialize.c")
     ("bench" "Benchmark against serialize.c, C++ serialize and serialize.rs")
     ("bench-report" "Goose vs C++ vs Rust (and Lobster) benchmark report"))
@@ -40,6 +41,7 @@
     ("floats" "goose" "port/floats")
     ("strings" "goose" "port/strings")
     ("conformance" "goose" "port/conformance")
+    ("witnesses" "goose" "port/witnesses")
     ("fuzz" "goose" "port/fuzz")
     ("bench" "goose" "port/bench")
     ("bench-report" "goose" "port/bench-report")))
@@ -57,9 +59,10 @@
   (:id "port/floats" :type :work-set :children ("serialize-goose-floats"))
   (:id "serialize-goose-strings" :type :task :title "Bytes, strings, wide strings, align and objects" :state :done :evidence ("land commit c7cdfa7fc662 on sprint/serialize-goose (card serialize-goose-strings, stream serialize-goose)"))
   (:id "port/strings" :type :work-set :children ("serialize-goose-strings"))
-  (:id "serialize-goose-conformance" :type :task :title "Whole conformance corpus, byte for byte with serialize.c" :state :todo :evidence ()
-   :note "card serialize-goose-conformance (stream serialize-goose, review when archived); last pushed head 625392bda3173fbf95ecf1a90f3b8eb2d5cc3c39 on sprint/serialize-goose-conformance.w2.g2.e21; brief kept in ~/rowan-working/sprint-archive-2026-10-20/serialize-goose/serialize-goose-conformance.md")
+  (:id "serialize-goose-conformance" :type :task :title "Whole conformance corpus, byte for byte with serialize.c" :state :done :evidence ("merge commit e9be15505f1c on main (PR #3): TestConformanceCorpus runs 18 files, 351 of 351 records; two sabotaged readers, the unknown-operation control and TestGoldenWireFormat green in CI on the fleet runners"))
   (:id "port/conformance" :type :work-set :children ("serialize-goose-conformance"))
+  (:id "serialize-goose-witnesses" :type :task :title "Reversed witnesses: each deleted refusal rule turns the suite red" :state :done :evidence ("merge commit e9be15505f1c on main (PR #3): make witnesses, 16 of 16 single-rule deletions red in CI"))
+  (:id "port/witnesses" :type :work-set :children ("serialize-goose-witnesses"))
   (:id "serialize-goose-fuzz-differential" :type :task :title "Differential fuzzing against serialize.c" :state :todo :evidence ()
    :note "card serialize-goose-fuzz-differential (stream serialize-goose, review when archived); last pushed head ceab089a95ef670b9d746324ad67422f06fcee75 on sprint/serialize-goose-fuzz-differential.w1.g1.e21; brief kept in ~/rowan-working/sprint-archive-2026-10-20/serialize-goose/serialize-goose-fuzz-differential.md")
   (:id "port/fuzz" :type :work-set :children ("serialize-goose-fuzz-differential"))
