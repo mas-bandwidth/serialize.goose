@@ -146,7 +146,9 @@ fn serialize_string<T>(s: ReadStream&, value: T&, buffer_size: i64) -> bool {
         return true;
     }
     guard serialize_align(s) else { return false; }
-    guard serialize_read_check(s, length * 8) else { return false; }
+    // The claimed length against the bytes left, in bytes: length * 8 could
+    // wrap for a huge buffer_size, the division cannot.
+    guard length <= serialize_bits_remaining(s) / 8 else { return serialize_fail(s, SERIALIZE_ERROR_PAST_END); }
     let start = s.bits_read >> 3;
     let payload = s.data[start..start + length];
     for i in length {

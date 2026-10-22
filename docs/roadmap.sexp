@@ -69,7 +69,7 @@
   (:id "serialize-goose-conformance" :type :task :title "Whole conformance corpus, byte for byte with serialize.c" :state :done :evidence ("merge commit e9be15505f1c on main (PR #3): TestConformanceCorpus runs 18 files, 351 of 351 records; two sabotaged readers, the unknown-operation control and TestGoldenWireFormat green in CI on the fleet runners"))
   (:id "port/conformance" :type :work-set :children ("serialize-goose-conformance"))
   (:id "serialize-goose-witnesses" :type :task :title "Reversed witnesses: each deleted refusal rule turns the suite red" :state :done :evidence ("merge commit e9be15505f1c on main (PR #3): make witnesses, 16 of 16 single-rule deletions red in CI"))
-  (:id "serialize-goose-witnesses-2-0" :type :task :title "Reversed witnesses extended for format 2.0" :state :done :evidence ("PR #5 on main (branch rowan/format-2.0): make witnesses, 29 of 29 single-rule deletions red in CI"))
+  (:id "serialize-goose-witnesses-2-0" :type :task :title "Reversed witnesses extended for format 2.0" :state :done :evidence ("PR #5 on main (branch rowan/format-2.0): make witnesses, 32 of 32 single-rule deletions red in CI"))
   (:id "port/witnesses" :type :work-set :children ("serialize-goose-witnesses" "serialize-goose-witnesses-2-0"))
   (:id "serialize-goose-controls" :type :task :title "Negative controls: each deleted rule fails exactly its conformance-controls list" :state :done :evidence ("PR #5 on main (branch rowan/format-2.0): make controls, 16 of 16 (15 sabotaged readers on their exact .expected lists, and unknown-operation rejected) in CI"))
   (:id "port/controls" :type :work-set :children ("serialize-goose-controls"))

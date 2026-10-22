@@ -47,9 +47,12 @@ src/serialize_compressed_float.goose	93	if integer_value > max_integer_value	if 
 src/serialize_compressed_float.goose	103	guard serialize_float_bits_are_finite(serialize_f32_bits(decoded))	guard true	compressed-float-decode-finite (compressed_float)
 src/serialize_compressed_float.goose	69	if !cf_finite(top)	if false	compressed-float-write-top-finite (compressed_float)
 src/serialize_bytes.goose	132	if value[i] == 0	if false	string-write-refuses-nul (string)
-src/serialize_bytes.goose	153	guard payload[i] != 0	guard true	string-refuses-nul (string)
-src/serialize_bytes.goose	153	SERIALIZE_ERROR_EMBEDDED_NUL	SERIALIZE_ERROR_INVALID_UTF8	string-nul-reason-embedded_nul (string)
-src/serialize_bytes.goose	155	guard serialize_valid_utf8(payload)	guard true	string-valid-utf8 (string)
+src/serialize_bytes.goose	155	guard payload[i] != 0	guard true	string-refuses-nul (string)
+src/serialize_bytes.goose	155	SERIALIZE_ERROR_EMBEDDED_NUL	SERIALIZE_ERROR_INVALID_UTF8	string-nul-reason-embedded_nul (string)
+src/serialize_bytes.goose	157	guard serialize_valid_utf8(payload)	guard true	string-valid-utf8 (string)
+src/serialize_float.goose	61	guard serialize_float_bits_are_finite(bits) else	value = serialize_f32_from_bits(bits); guard serialize_float_bits_are_finite(bits) else	float-read-destination-unwritten (Reader Obligations)
+src/serialize_compressed_float.goose	103	guard serialize_float_bits_are_finite(serialize_f32_bits(decoded)) else {	value = decoded; guard serialize_float_bits_are_finite(serialize_f32_bits(decoded)) else {	compressed-float-destination-unwritten (Reader Obligations)
+src/serialize_bytes.goose	151	guard length <= serialize_bits_remaining(s) / 8	guard true	string-length-checked-before-payload (string; Reader Obligations)
 EOF
 }
 

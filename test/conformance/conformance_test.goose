@@ -358,75 +358,86 @@ fn conf_read_int_unchecked(s: ReadStream&, value: i32&, min: i32, max: i32) -> b
     return true;
 }
 
+// The raw 32 bits of an i32 in the low lane, unextended: how a refused 32-bit
+// read hands its destination back for the sentinel check.
+fn conf_raw32(v: i32) -> Int128 { return Int128 { lo: v as! u32, hi: 0 }; }
+
+// Each scalar arm reads into a local that STARTS as the step's sentinel
+// (st.got / st.got_bool, set by conf_run_record) and, on a refusal, hands the
+// local back, so the "destination unwritten" check sees what the reader did
+// to the caller's variable (STANDARD.md, Reader Obligations).
 fn conf_read_step(s: ReadStream&, st: Step&, check: bool, sabotage: i64) -> bool {
     if st.kind == K_BITS {
         if st.width <= 32 {
-            var v: u32 = 0xDEADBEEF;
-            guard serialize_bits(s, v, st.width) else { return false; }
+            var v: u32 = st.got.lo as! u32;
+            guard serialize_bits(s, v, st.width) else { st.got = Int128 { lo: v, hi: 0 }; return false; }
             st.got = Int128 { lo: v, hi: 0 };
         } else {
-            var v: u64 = 0xDEADBEEFCAFEBABE;
-            guard serialize_bits64(s, v, st.width) else { return false; }
+            var v: u64 = st.got.lo;
+            guard serialize_bits64(s, v, st.width) else { st.got = Int128 { lo: v, hi: 0 }; return false; }
             st.got = Int128 { lo: v, hi: 0 };
         }
         return !check || conf_same(st.want, st.got);
     }
     if st.kind == K_BOOL {
-        var v = true;
-        guard serialize_bool(s, v) else { return false; }
+        var v = st.got_bool;
+        guard serialize_bool(s, v) else { st.got_bool = v; return false; }
         st.got_bool = v;
         return !check || v == st.want_bool;
     }
     if st.kind == K_UINT128 {
-        var v = Uint128 { lo: 0xDEADBEEFCAFEBABE, hi: 0x0123456789ABCDEF };
-        guard serialize_uint128(s, v) else { return false; }
+        var v = Uint128 { lo: st.got.lo, hi: st.got.hi };
+        guard serialize_uint128(s, v) else { st.got = Int128 { lo: v.lo, hi: v.hi }; return false; }
         st.got = Int128 { lo: v.lo, hi: v.hi };
         return !check || conf_same(st.want, st.got);
     }
     if st.kind == K_ALIGN { return conf_read_align(s, sabotage); }
     if st.kind == K_INT {
-        var v: i32 = 0x1234567;
+        var v: i32 = st.got.lo as! i32;
         if sabotage == SAB_INT_RANGE {
             guard conf_read_int_unchecked(s, v, st.min.lo as! i32, st.max.lo as! i32) else { return false; }
         } else {
-            guard serialize_int(s, v, st.min.lo as! i32, st.max.lo as! i32) else { return false; }
+            guard serialize_int(s, v, st.min.lo as! i32, st.max.lo as! i32) else { st.got = conf_raw32(v); return false; }
         }
         st.got = Int128 { lo: v as! u64, hi: if v < 0 { 0xffffffffffffffff } else { 0 } };
         return !check || conf_same(st.want, st.got);
     }
     if st.kind == K_INT64 {
-        var v: i64 = 0x0123456789ABCDEF;
-        guard serialize_int64(s, v, st.min.lo as! i64, st.max.lo as! i64) else { return false; }
+        var v: i64 = st.got.lo as! i64;
+        guard serialize_int64(s, v, st.min.lo as! i64, st.max.lo as! i64) else { st.got = Int128 { lo: v as! u64, hi: 0 }; return false; }
         st.got = Int128 { lo: v as! u64, hi: if v < 0 { 0xffffffffffffffff } else { 0 } };
         return !check || conf_same(st.want, st.got);
     }
     if st.kind == K_INT128 {
-        var v = Int128 { lo: 0x0123456789ABCDEF, hi: 0xFEDCBA9876543210 };
-        guard serialize_int128(s, v, st.min, st.max) else { return false; }
+        var v = st.got;
+        guard serialize_int128(s, v, st.min, st.max) else { st.got = v; return false; }
         st.got = v;
         return !check || conf_same(st.want, st.got);
     }
     if st.kind == K_INT_RELATIVE {
-        var v: i32 = 0x1234567;
-        guard serialize_int_relative(s, st.previous, v) else { return false; }
+        var v: i32 = st.got.lo as! i32;
+        guard serialize_int_relative(s, st.previous, v) else { st.got = conf_raw32(v); return false; }
         st.got = Int128 { lo: v as! u64, hi: if v < 0 { 0xffffffffffffffff } else { 0 } };
         return !check || conf_same(st.want, st.got);
     }
     if st.kind == K_FLOAT {
-        var v: f32 = 0.0;
-        guard serialize_float(s, v) else { return false; }
+        var v: f32 = serialize_f32_from_bits(st.got.lo as! u32);
+        guard serialize_float(s, v) else { st.got = Int128 { lo: serialize_f32_bits(v), hi: 0 }; return false; }
         st.got = Int128 { lo: serialize_f32_bits(v), hi: 0 };
         return !check || conf_same(st.want, st.got);
     }
     if st.kind == K_DOUBLE {
-        var v: f64 = 0.0;
-        guard serialize_double(s, v) else { return false; }
+        var v: f64 = serialize_f64_from_bits(st.got.lo);
+        guard serialize_double(s, v) else { st.got = Int128 { lo: serialize_f64_bits(v), hi: 0 }; return false; }
         st.got = Int128 { lo: serialize_f64_bits(v), hi: 0 };
         return !check || conf_same(st.want, st.got);
     }
     if st.kind == K_COMPRESSED_FLOAT {
-        var v: f32 = 0.0;
-        guard serialize_compressed_float(s, v, st.fmin, st.fmax, st.fres) else { return false; }
+        var v: f32 = serialize_f32_from_bits(st.got.lo as! u32);
+        guard serialize_compressed_float(s, v, st.fmin, st.fmax, st.fres) else {
+            st.got = Int128 { lo: serialize_f32_bits(v), hi: 0 };
+            return false;
+        }
         st.got = Int128 { lo: serialize_f32_bits(v), hi: 0 };
         return !check || conf_same(st.want, st.got);
     }
@@ -447,19 +458,19 @@ fn conf_read_step(s: ReadStream&, st: Step&, check: bool, sabotage: i64) -> bool
     if st.kind == K_END { return serialize_end(s); }
     if st.kind == K_FIXED {
         if st.storage == 32 {
-            var v: i32 = 0x1234567;
+            var v: i32 = st.got.lo as! i32;
             guard serialize_fixed32(s, v, st.integer_bits, st.fraction_bits,
-                                    st.min.lo as! i32, st.max.lo as! i32) else { return false; }
+                                    st.min.lo as! i32, st.max.lo as! i32) else { st.got = conf_raw32(v); return false; }
             st.got = Int128 { lo: v as! u64, hi: if v < 0 { 0xffffffffffffffff } else { 0 } };
         } else if st.storage == 64 {
-            var v: i64 = 0x0123456789ABCDEF;
+            var v: i64 = st.got.lo as! i64;
             guard serialize_fixed64(s, v, st.integer_bits, st.fraction_bits,
-                                    st.min.lo as! i64, st.max.lo as! i64) else { return false; }
+                                    st.min.lo as! i64, st.max.lo as! i64) else { st.got = Int128 { lo: v as! u64, hi: 0 }; return false; }
             st.got = Int128 { lo: v as! u64, hi: if v < 0 { 0xffffffffffffffff } else { 0 } };
         } else {
-            var v = Int128 { lo: 0x0123456789ABCDEF, hi: 0xFEDCBA9876543210 };
+            var v = st.got;
             guard serialize_fixed128(s, v, st.integer_bits, st.fraction_bits,
-                                     st.min.lo as! i64, st.max.lo as! i64) else { return false; }
+                                     st.min.lo as! i64, st.max.lo as! i64) else { st.got = v; return false; }
             st.got = v;
         }
         return !check || conf_same(st.want, st.got);
@@ -992,10 +1003,11 @@ fn conf_run_record(rec: Rec&, sabotage: i64, tally: Tally&) -> bool {
 
     // The slack past the stream is a non-zero pattern, so a decode that
     // depends on memory past the end cannot pass by reading zeros
-    // (STANDARD.md, The vector format).
+    // (STANDARD.md, The conformance corpus). The in-place init keeps it:
+    // serialize_read_stream_init_padded would zero the 8 slack bytes.
     var padded: u8[2048] = [0xFF; 2048];
     for i in rec.wire_len { padded[i] = rec.wire[i]; }
-    var r = serialize_read_stream_init_padded(padded, rec.wire[0..rec.wire_len]);
+    var r = serialize_read_stream_init(padded, rec.wire_len);
 
     // Sentinels: a refused scalar read must leave its destination exactly as
     // it was (STANDARD.md, Reader Obligations).
