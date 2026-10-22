@@ -11,7 +11,7 @@ import .serialize_stream;
 // so [INT32_MIN, INT32_MAX] is exact.
 fn serialize_bits_required(min: u32, max: u32) -> i64 {
     if min == max { return 0; }
-    let span: u64 = (max - min) as u64;
+    let span: u64 = max - min;
     return 64 - clz(span);
 }
 
