@@ -26,6 +26,9 @@ jobs:
       - name: Check CI workflow invariants
         run: make check-ci
 
+      - name: Corpus directory override (SERIALIZE_CONFORMANCE_DIR) unit test
+        run: make check-corpus-dir
+
       - name: ROADMAP.md is what docs/roadmap.sexp renders
         run: PATH="$HOME/.local/bin:$PATH" make roadmap-check
 
