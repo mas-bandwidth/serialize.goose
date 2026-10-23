@@ -7,7 +7,7 @@
 # A test file is test/<name>/<x>_test.goose. Each `fn Test<Name>()` it declares
 # at the start of a line is one test, run in its own process: the runner stages
 # build/run/<name>/ (a copy of src/*.goose, every .goose file of test/<name>/
-# and conformance/*.txt), writes a root file there that imports the test file
+# and the corpus's *.txt), writes a root file there that imports the test file
 # and calls the one test from main, and runs it with `$GOOSE run`. A test fails
 # by aborting (assert, abort, a bounds or debug check): a nonzero exit.
 #
@@ -17,6 +17,11 @@
 #                               holds `goose runtime error: <message>`
 #
 # A test whose build prints a compiler warning FAILS: zero warnings.
+#
+# The corpus is the vendored conformance/ unless SERIALIZE_CONFORMANCE_DIR names
+# another directory (the nightly functional test points it at
+# mas-bandwidth/serialize main). A SERIALIZE_CONFORMANCE_DIR that is not a
+# directory fails, naming it: never a silent fall back to the vendored copy.
 #
 # Output: `RUN Test<Name>`, then `--- PASS Test<Name>` or `--- FAIL Test<Name>`
 # with the run's output indented below. The runner exits nonzero on any FAIL, on
@@ -30,6 +35,11 @@ GOOSE=${GOOSE:-$root/dist/goose-v2026.2-linux-x64/goose}
 # goose run builds C sidecars and caches under GOOSE_HOME: keep it in the job.
 GOOSE_HOME=${GOOSE_HOME:-$root/build/goose-home}
 export GOOSE_HOME
+corpus=${SERIALIZE_CONFORMANCE_DIR:-$root/conformance}
+if [ ! -d "$corpus" ]; then
+    echo "FAIL SERIALIZE_CONFORMANCE_DIR=$corpus is not a directory"
+    exit 1
+fi
 
 if [ $# -gt 0 ] && [ -n "$1" ]; then
     names=$1
@@ -66,7 +76,7 @@ for name in $names; do
     mkdir -p "$stage"
     cp "$root"/src/*.goose "$stage"/
     cp "$dir"/*.goose "$stage"/
-    for f in "$root"/conformance/*.txt; do
+    for f in "$corpus"/*.txt; do
         [ -f "$f" ] && cp "$f" "$stage"/
     done
     dirfail=0
