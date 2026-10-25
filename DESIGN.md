@@ -532,3 +532,15 @@ checked puts each in its own `if` (test/smoke does).
   (`conf_control_main`); the unknown-operation control must be rejected.
   A needle that does not occur exactly once fails the control, and a
   vendored `.expected` with no row fails the run.
+- `make fuzz` (make/fuzz.mk; a functional test, in CI after the controls):
+  the differential against serialize.c v2.0.0, the family's pattern
+  (serialize.lobster). fuzz/host.c generates 2000 programs over every
+  operation from a fixed seed; serialize.c and fuzz/fuzz_driver.goose (built
+  with `goose build --debug`, one child per batch of 100) must write the same
+  bytes, decode each other's to the same values, and on one program in four
+  agree on a mutant's accept or refuse, refusing step and reason. Three
+  negative controls must go red, each for its own reason: the C side writing
+  one int range one bit wider, the Goose reader's range refusals deleted, and
+  the string reader naming invalid_utf8 for embedded_nul. `make fuzz-extended
+  FUZZ_SEED=<seed> FUZZ_DURATION=<s>` is the nightly run
+  (.github/workflows/nightly-fuzz.yml), its seed varying and printed.

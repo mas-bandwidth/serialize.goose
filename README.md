@@ -24,6 +24,6 @@ fn read_player(packet: const u8[:], destination: u8[:], p: Player&) -> bool {
 }
 ```
 
-`make dist-goose` once, then `make test`, `make witnesses` and `make controls`. DESIGN.md is the contract.
+`make dist-goose` once, then `make test`, `make witnesses`, `make controls` and `make fuzz` (the differential against serialize.c). DESIGN.md is the contract.
 
 BSD 3-Clause license.
