@@ -1,0 +1,80 @@
+name: nightly fuzz
+
+# A functional test, nightly: the fuzz differential against serialize.c
+# v2.0.0 (make/fuzz.mk, fuzz/host.c, fuzz/fuzz_driver.goose) with time to
+# explore. ci.yml's `make fuzz` is the smoke: 2000 programs from the FIXED
+# seed plus the three negative controls. This job runs the same smoke and
+# controls, then `make fuzz-extended` for `duration` seconds from a seed that
+# changes every run (the run id, unless one is given), printed first so a red
+# run replays with `make fuzz-extended FUZZ_SEED=<seed> FUZZ_DURATION=...`.
+#
+# Goose has no coverage-guided fuzzer, so there is no corpus to cache (the
+# family's differential pattern, serialize.lobster and serialize.lua): the
+# varying seed is what makes the nights cumulative. A failing batch (the
+# programs, both byte strings, the mutant) is kept under build/fuzz/work/ and
+# uploaded.
+#
+# It runs on the fleet's runner like every workflow here (make check-ci holds
+# every workflow to it). No push or pull_request trigger.
+
+on:
+  schedule:
+    - cron: '17 7 * * *'   # every day at 07:17 UTC
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzz duration in seconds'
+        default: '3600'
+        required: false
+      seed:
+        description: 'Generator seed (empty: the run id); set it to replay a red run'
+        default: ''
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: fuzz differential against serialize.c (extended)
+    # The fleet's self-hosted runners serve this repository only: a fork's
+    # copy of this workflow never runs on them.
+    if: github.repository == 'mas-bandwidth/serialize.goose'
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
+    timeout-minutes: 90
+    env:
+      DURATION: ${{ github.event.inputs.duration || '3600' }}
+      SEED_INPUT: ${{ github.event.inputs.seed }}
+    steps:
+      - name: Runner
+        run: echo "runner $RUNNER_NAME"
+
+      - uses: actions/checkout@v4
+
+      - name: Fetch the pinned Goose toolchain
+        run: make dist-goose
+
+      - name: Smoke and negative controls
+        run: make fuzz
+
+      - name: Extended differential
+        run: |
+          seed="${SEED_INPUT:-$GITHUB_RUN_ID}"
+          echo "seed $seed, duration $DURATION s"
+          make fuzz-extended FUZZ_SEED="$seed" FUZZ_DURATION="$DURATION" 2>&1 | tee build/fuzz/extended.log
+          exit "${PIPESTATUS[0]}"
+        shell: bash
+
+      - name: Upload failing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failures
+          path: |
+            build/fuzz/work/
+            build/fuzz/*.log
+          if-no-files-found: ignore
