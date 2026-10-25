@@ -21,10 +21,10 @@ The Goose port of serialize, the open-source bitpacking serializer: the same wir
 | Whole conformance corpus, byte for byte with serialize.c | ✅ |
 | Reversed witnesses: each deleted refusal rule turns the suite red | ✅ |
 | Negative controls: each deleted rule fails exactly its conformance-controls list | ✅ |
-| Differential fuzzing against serialize.c | ❌ |
+| Differential fuzzing against serialize.c | ✅ |
 | Benchmark against serialize.c, C++ serialize and serialize.rs | ❌ |
 | Goose vs C++ vs Rust (and Lobster) benchmark report | ❌ |
-| complete | 78% |
+| complete | 85% |
 
 [Source data](docs/roadmap.sexp)
 
