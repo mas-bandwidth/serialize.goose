@@ -4,13 +4,23 @@
 #
 # make fuzz            the CI smoke: fuzz/host.c (serialize.c v2.0.0 from
 #                      .ref/, header-only) generates 2000 programs from its
-#                      FIXED seed and drives fuzz/fuzz_driver.goose, built once
-#                      with goose build --debug over a staged copy of src/, one
-#                      child process per batch of 100 programs, then the three
-#                      negative controls below, each of which must go red for
-#                      its own reason.
+#                      FIXED seed and drives fuzz/fuzz_driver.goose, built
+#                      twice over a staged copy of src/ (goose build --debug
+#                      and goose build -O2), one child process per batch of
+#                      100 programs per build, then the negative controls
+#                      below, each of which must go red for its own reason.
+#                      The two builds' outputs must be identical on every
+#                      batch ("optimized driver output differs"), and the
+#                      host also compares measure counts, consumed bits on
+#                      accepted reads and terminal behaviour on refused
+#                      reads.  Fixed point declarations rotate through zero
+#                      and nonzero fractions, degenerate ranges, raw edge
+#                      values and encoded widths at the 32-bit group
+#                      boundaries; the host fails by name if that coverage
+#                      stops being emitted ("fixed coverage missing").
 # make fuzz-extended   the nightly run: FUZZ_SEED (printed first, so a red run
-#                      replays with it) and FUZZ_DURATION seconds of batches.
+#                      replays with it) and FUZZ_DURATION seconds of batches,
+#                      through both driver builds as well.
 #
 # Negative controls (the reversed witnesses of this test):
 #   range widened   the C side writes one int range one bit wider: the
@@ -22,7 +32,19 @@
 #   wrong reason    the Goose string reader names invalid_utf8 where
 #                   embedded_nul is due: the reasons must disagree
 #                   ("refusal reason mismatch (C embedded_nul, Goose invalid_utf8)").
+#   fraction bits   the Goose fixed point raw bounds are computed with
+#                   fraction_bits forced to zero in a staged copy of src/:
+#                   fractional programs must diverge ("write bytes differ"
+#                   or "measure mismatch").
+#   high group      one high 32-bit group of the Goose fixed point offset
+#                   is read from the wrong lane in a staged copy of src/:
+#                   wide fixed programs must diverge ("write bytes differ").
+#   optimized       the optimized driver is built from the fraction-sabotaged
+#                   stage: the host's debug/optimized comparison must refuse
+#                   it ("optimized driver output differs").
 # A sabotage whose needle no longer matches src/ fails by name, never a skip.
+# An optimized build that fails is a hard failure naming the platform
+# blocker, never a skip: optimized parity is either proven or reported.
 
 FUZZ_REF_TAG    := v2.0.0
 FUZZ_REF_COMMIT := e11585b0dfbf214ed37c442d5f8b6133fd8b10df
@@ -35,7 +57,7 @@ FUZZ_CFLAGS     := -O2 -std=c99 -ffp-contract=off -Wall -Wextra -Werror
 FUZZ_SEED       ?= 0x9e3779b97f4a7c15
 FUZZ_DURATION   ?= 3600
 
-.PHONY: fuzz fuzz-ref fuzz-host fuzz-driver fuzz-extended
+.PHONY: fuzz fuzz-ref fuzz-host fuzz-driver fuzz-driver-opt fuzz-extended
 
 # The oracle, read only: serialize.c at the pin, cloned once into .ref/
 # (gitignored). A clone that is not the pinned commit is refused.
@@ -70,9 +92,24 @@ fuzz-driver: toolchain-goose
 	@if grep ': warning: ' $(FUZZ_BUILD)/stage/build.log; then \
 		echo "fuzz REFUSES: fuzz/fuzz_driver.goose or src/ builds with warnings (zero warnings)"; exit 1; fi
 
-fuzz: fuzz-host fuzz-driver
+# fuzz_build_opt STAGE EXE: the same staged sources built optimized
+# (goose build -O2, no --debug; the documented debug/release arithmetic
+# distinction is exactly what this build exercises).  A failed optimized
+# build is the production-mode blocker, reported by name, never skipped.
+define fuzz_build_opt
+	cd $(1) && GOOSE_HOME=$(FUZZ_GOOSE_HOME) $(GOOSE) build fuzz_driver.goose -O2 -o $(2) >$(1)/build-opt.log 2>&1 || \
+		{ cat $(1)/build-opt.log; echo "fuzz REFUSES: optimized goose build of $(1) failed; optimized parity is unsupported on this platform/toolchain"; exit 1; }
+endef
+
+fuzz-driver-opt: toolchain-goose fuzz-driver
+	@$(call fuzz_build_opt,$(FUZZ_BUILD)/stage,$(FUZZ_BUILD)/driver-opt)
+	@if grep ': warning: ' $(FUZZ_BUILD)/stage/build-opt.log; then \
+		echo "fuzz REFUSES: fuzz/fuzz_driver.goose or src/ builds optimized with warnings (zero warnings)"; exit 1; fi
+	@echo "fuzz record: seed $(FUZZ_SEED); goose $$($(GOOSE) version 2>/dev/null | head -1); cc $$($(CC) --version 2>/dev/null | head -1); optimized command: goose build fuzz_driver.goose -O2; optimized artifact: $(FUZZ_BUILD)/driver-opt sha256 $$( (sha256sum $(FUZZ_BUILD)/driver-opt 2>/dev/null || shasum -a 256 $(FUZZ_BUILD)/driver-opt) | cut -d' ' -f1)"
+
+fuzz: fuzz-host fuzz-driver fuzz-driver-opt
 	@rm -rf $(FUZZ_WORK) && mkdir -p $(FUZZ_WORK)
-	@$(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver --tmp $(FUZZ_WORK)
+	@$(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver --driver-opt $(FUZZ_BUILD)/driver-opt --tmp $(FUZZ_WORK)
 	@echo "negative control (range widened): the C side writes one int range one bit wider"
 	@if $(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver --tmp $(FUZZ_WORK) --negative-control \
 		>$(FUZZ_BUILD)/negative.log 2>&1; then \
@@ -123,10 +160,58 @@ fuzz: fuzz-host fuzz-driver
 	else \
 		echo "negative control (wrong reason): RED as required ($$(grep -m1 'refusal reason mismatch' $(FUZZ_BUILD)/reason.log))"; \
 	fi
+	@echo "negative control (fraction bits): the Goose fixed raw bounds ignore fraction_bits"
+	@$(call fuzz_stage,$(FUZZ_BUILD)/stage-frac)
+	@cd $(FUZZ_BUILD)/stage-frac && \
+		needle='for i in fraction_bits {' && \
+		grep -qF "$$needle" serialize_fixed.goose || { echo "fraction bits control: the needle no longer matches serialize_fixed.goose"; exit 1; } && \
+		awk -v n="$$needle" '{ i = index($$0, n); if (i > 0) { $$0 = substr($$0, 1, i - 1) "for i in 0 {" substr($$0, i + length(n)) } print }' serialize_fixed.goose >serialize_fixed.goose.tmp && \
+		mv serialize_fixed.goose.tmp serialize_fixed.goose
+	@$(call fuzz_build,$(FUZZ_BUILD)/stage-frac,$(FUZZ_BUILD)/driver-frac)
+	@if $(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver-frac --tmp $(FUZZ_WORK) --programs 1000 \
+		>$(FUZZ_BUILD)/frac.log 2>&1; then \
+		echo "negative control (fraction bits) DID NOT go red"; exit 1; \
+	elif ! grep -q -- '--- FAIL TestDifferentialAgainstSerializeC' $(FUZZ_BUILD)/frac.log || \
+		! grep -qE 'write bytes differ|measure mismatch' $(FUZZ_BUILD)/frac.log; then \
+		cat $(FUZZ_BUILD)/frac.log; \
+		echo "negative control (fraction bits) went red for the wrong reason"; exit 1; \
+	else \
+		echo "negative control (fraction bits): RED as required ($$(grep -m1 -E 'write bytes differ|measure mismatch' $(FUZZ_BUILD)/frac.log))"; \
+	fi
+	@echo "negative control (high group): one high 32-bit group of the Goose fixed offset comes from the wrong lane"
+	@$(call fuzz_stage,$(FUZZ_BUILD)/stage-group)
+	@cd $(FUZZ_BUILD)/stage-group && \
+		needle='if group == 2 { return (value.hi & 0xffffffff) as! u32; }' && \
+		grep -qF "$$needle" serialize_fixed.goose || { echo "high group control: the needle no longer matches serialize_fixed.goose"; exit 1; } && \
+		awk -v n="$$needle" '{ i = index($$0, n); if (i > 0) { $$0 = substr($$0, 1, i - 1) "if group == 2 { return (value.lo & 0xffffffff) as! u32; }" substr($$0, i + length(n)) } print }' serialize_fixed.goose >serialize_fixed.goose.tmp && \
+		mv serialize_fixed.goose.tmp serialize_fixed.goose
+	@$(call fuzz_build,$(FUZZ_BUILD)/stage-group,$(FUZZ_BUILD)/driver-group)
+	@if $(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver-group --tmp $(FUZZ_WORK) --programs 1000 \
+		>$(FUZZ_BUILD)/group.log 2>&1; then \
+		echo "negative control (high group) DID NOT go red"; exit 1; \
+	elif ! grep -q 'write bytes differ' $(FUZZ_BUILD)/group.log || \
+		! grep -q -- '--- FAIL TestDifferentialAgainstSerializeC' $(FUZZ_BUILD)/group.log; then \
+		cat $(FUZZ_BUILD)/group.log; \
+		echo "negative control (high group) went red for the wrong reason"; exit 1; \
+	else \
+		echo "negative control (high group): RED as required ($$(grep -m1 'write bytes differ' $(FUZZ_BUILD)/group.log))"; \
+	fi
+	@echo "negative control (optimized): the optimized driver is built from the fraction-sabotaged stage"
+	@$(call fuzz_build_opt,$(FUZZ_BUILD)/stage-frac,$(FUZZ_BUILD)/driver-optbad)
+	@if $(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver --driver-opt $(FUZZ_BUILD)/driver-optbad --tmp $(FUZZ_WORK) --programs 1000 \
+		>$(FUZZ_BUILD)/opt.log 2>&1; then \
+		echo "negative control (optimized) DID NOT go red"; exit 1; \
+	elif ! grep -q 'optimized driver output differs' $(FUZZ_BUILD)/opt.log || \
+		! grep -q -- '--- FAIL TestDifferentialAgainstSerializeC' $(FUZZ_BUILD)/opt.log; then \
+		cat $(FUZZ_BUILD)/opt.log; \
+		echo "negative control (optimized) went red for the wrong reason"; exit 1; \
+	else \
+		echo "negative control (optimized): RED as required ($$(grep -m1 'optimized driver output differs' $(FUZZ_BUILD)/opt.log))"; \
+	fi
 	@rm -rf $(FUZZ_WORK) && mkdir -p $(FUZZ_WORK)
 
 # The nightly extended run (.github/workflows/nightly-fuzz.yml). A red run
 # keeps its failing batch under build/fuzz/work/ and prints the seed.
-fuzz-extended: fuzz-host fuzz-driver
+fuzz-extended: fuzz-host fuzz-driver fuzz-driver-opt
 	@mkdir -p $(FUZZ_WORK)
-	@$(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver --tmp $(FUZZ_WORK) --seed $(FUZZ_SEED) --duration $(FUZZ_DURATION)
+	@$(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver --driver-opt $(FUZZ_BUILD)/driver-opt --tmp $(FUZZ_WORK) --seed $(FUZZ_SEED) --duration $(FUZZ_DURATION)
