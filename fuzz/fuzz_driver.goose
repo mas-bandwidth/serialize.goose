@@ -3,12 +3,16 @@
 // fuzz/host.c writes one batch of programs; this driver (built once with
 // goose build, run as `fuzz_driver <batch> <output>`) replays every program on
 // the port's write stream, then reads the C writer's bytes and, where present,
-// the mutant bytes. It prints one W line per program (the port's bytes) and
-// R/V lines with the accept/refuse verdict, the refusing step, the refusal
-// reason ("none" on an accepted read; STANDARD.md, Refusal reasons) and every
-// value decoded before it. The host compares these against serialize.c's own
-// results. The line format is serialize.lobster's fuzz driver's, so the host
-// is the family's.
+// the mutant bytes. It prints one W line per program (the port's bytes), one
+// M line with the measure stream's bit count, and R/V lines with the
+// accept/refuse verdict, the refusing step, the refusal reason ("none" on an
+// accepted read; STANDARD.md, Refusal reasons), the reader's consumed bit
+// count, a terminal flag (on a refused read, whether one further read is
+// also refused; -1 on an accepted read) and every value decoded before it.
+// The host compares these against serialize.c's own results. The same source
+// is also built optimized (goose build -O2, no --debug) by make/fuzz.mk, and
+// the host requires the two builds' outputs to be identical. The line format
+// is serialize.lobster's fuzz driver's, so the host is the family's.
 
 import .serialize;
 import std;
@@ -154,6 +158,78 @@ fn fz_run_write(out: u8[>..]&, id: i64, ops: const u8[:][:]) {
     format(out, "W ", id, " ");
     fz_put_bytes(out, buffer[0..serialize_bytes_processed(w)]);
     format(out, if ok && serialize_error(w) == SERIALIZE_ERROR_NONE { " 1\n" } else { " 0\n" });
+}
+
+// ---- measure (the same dispatch on a MeasureStream) -------------------------
+
+fn fz_measure(m: MeasureStream&, line: const u8[:]) -> bool {
+    let t = split(line, ' ');
+    let kind = t[0];
+    if kind == "bits" { return serialize_bits(m, fz_dec(t[2]) as! u32, fz_dec(t[1])); }
+    if kind == "bits64" { return serialize_bits64(m, fz_hex(t[2]), fz_dec(t[1])); }
+    if kind == "bool" { return serialize_bool(m, fz_dec(t[1]) != 0); }
+    if kind == "uint8" { return serialize_uint8(m, fz_dec(t[1]) as! u8); }
+    if kind == "uint16" { return serialize_uint16(m, fz_dec(t[1]) as! u16); }
+    if kind == "uint32" { return serialize_uint32(m, fz_dec(t[1]) as! u32); }
+    if kind == "uint64" { return serialize_uint64(m, fz_hex(t[1])); }
+    if kind == "int" {
+        return serialize_int(m, fz_dec(t[3]) as! i32, fz_dec(t[1]) as! i32, fz_dec(t[2]) as! i32);
+    }
+    if kind == "int64" { return serialize_int64(m, fz_dec(t[3]), fz_dec(t[1]), fz_dec(t[2])); }
+    if kind == "int_rel" { return serialize_int_relative(m, fz_dec(t[1]) as! i32, fz_dec(t[2]) as! i32); }
+    if kind == "uint128" { return serialize_uint128(m, Uint128 { lo: fz_hex(t[1]), hi: fz_hex(t[2]) }); }
+    if kind == "int128" {
+        return serialize_int128(m, Int128 { lo: fz_hex(t[5]), hi: fz_hex(t[6]) },
+            Int128 { lo: fz_hex(t[1]), hi: fz_hex(t[2]) }, Int128 { lo: fz_hex(t[3]), hi: fz_hex(t[4]) });
+    }
+    if kind == "float" { return serialize_float(m, fz_f32(t[1])); }
+    if kind == "double" { return serialize_double(m, serialize_f64_from_bits(fz_hex(t[1]))); }
+    if kind == "fixed32" {
+        return serialize_fixed32(m, fz_dec(t[5]) as! i32, fz_dec(t[1]), fz_dec(t[2]),
+            fz_dec(t[3]) as! i32, fz_dec(t[4]) as! i32);
+    }
+    if kind == "fixed64" {
+        return serialize_fixed64(m, fz_dec(t[5]), fz_dec(t[1]), fz_dec(t[2]), fz_dec(t[3]), fz_dec(t[4]));
+    }
+    if kind == "fixed128" {
+        return serialize_fixed128(m, Int128 { lo: fz_hex(t[5]), hi: fz_hex(t[6]) }, fz_dec(t[1]), fz_dec(t[2]),
+            fz_dec(t[3]), fz_dec(t[4]));
+    }
+    if kind == "cfloat" { return serialize_compressed_float(m, fz_f32(t[4]), fz_f32(t[1]), fz_f32(t[2]), fz_f32(t[3])); }
+    if kind == "cfloat_pre" {
+        return serialize_compressed_float_precomputed(m, fz_f32(t[5]), fz_dec(t[1]) as! u32, fz_dec(t[2]),
+            fz_f32(t[3]), fz_f32(t[4]));
+    }
+    if kind == "bytes" {
+        var data: u8[64] = [0; 64];
+        let n = fz_unhex(t[2], data);
+        if n != fz_dec(t[1]) { fz_die("bytes length mismatch", line); }
+        return serialize_bytes(m, data[0..n]);
+    }
+    if kind == "string" {
+        var data: u8[64] = [0; 64];
+        let n = fz_unhex(t[2], data);
+        return serialize_string(m, data[0..n], fz_dec(t[1]));
+    }
+    if kind == "align" { return serialize_align(m); }
+    if kind == "end" { return serialize_end(m); }
+    if kind == "object" {
+        var o = FzObject { b: true, i: 3, u: 42 };
+        return serialize_object(m, o);
+    }
+    fz_die("unknown op", line);
+    return false;
+}
+
+fn fz_run_measure(out: u8[>..]&, id: i64, ops: const u8[:][:]) {
+    var m = serialize_measure_stream_init();
+    var ok = true;
+    for line in ops {
+        if !ok { break; }
+        ok = fz_measure(m, line);
+    }
+    format(out, "M ", id, " ", serialize_bits_processed(m),
+        if ok && serialize_error(m) == SERIALIZE_ERROR_NONE { " 1\n" } else { " 0\n" });
 }
 
 // ---- read -------------------------------------------------------------------
@@ -330,8 +406,14 @@ fn fz_run_read(out: u8[>..]&, bytes_hex: const u8[:], ops: const u8[:][:], id: i
         }
         if toks.len > 0 { format(body, "V ", id, " ", src, " ", i, toks, "\n"); }
     }
+    let consumed = serialize_bits_processed(r);
+    var terminal: i64 = -1;
+    if !accept {
+        var extra = false;
+        terminal = if serialize_bool(r, extra) { 0 } else { 1 };
+    }
     format(out, "R ", id, " ", src, if accept { " 1 " } else { " 0 " }, step, " ",
-        serialize_refusal_name(serialize_error(r)), "\n", body);
+        serialize_refusal_name(serialize_error(r)), " ", consumed, " ", terminal, "\n", body);
 }
 
 // ---- main -------------------------------------------------------------------
@@ -361,6 +443,7 @@ fn main() {
         if nops < 1 || i + 1 + nops > lines.len { fz_die("short program", line); }
         let ops = lines[i + 1..i + 1 + nops];
         fz_run_write(out, id, ops);
+        fz_run_measure(out, id, ops);
         fz_run_read(out, t[4], ops, id, "c");
         if has_mutant { fz_run_read(out, t[5], ops, id, "m"); }
         i += 1 + nops;
