@@ -589,16 +589,35 @@ fn conf_run_step(s: MeasureStream&, st: Step&, check: bool, sabotage: i64) -> bo
     return conf_measure_step(s, st);
 }
 
+// An `object N` step, handed to the library's serialize_object: its own
+// serialize is the N nested steps. The library, not the runner, decides that
+// an object on a refused stream refuses, even an empty one (`object 0`, which
+// reads nothing; serialize 2.0.1, object read terminality).
+struct ConfObject {
+    steps: Step[64]&,
+    start: i64,
+    end: i64,
+    check: bool,
+    sabotage: i64,
+    failed: i64&,
+}
+
+recursive fn serialize<S>(s: S&, o: ConfObject&) -> bool {
+    return conf_run_steps(s, o.steps, o.start, o.end, o.check, o.sabotage, o.failed);
+}
+
 // Object is composition and adds no bytes of its own: the nested steps run
-// inline at exactly this position (STANDARD.md, object). Failure is terminal,
-// and every later step of a refused sequence must refuse too (STANDARD.md,
-// Reader Obligations).
+// inline at exactly this position (STANDARD.md, object), through
+// serialize_object. Failure is terminal, and every later step of a refused
+// sequence must refuse too (STANDARD.md, Reader Obligations).
 recursive fn conf_run_steps<S>(s: S&, steps: Step[64]&, start: i64, end: i64,
                                check: bool, sabotage: i64, failed: i64&) -> bool {
     var i = start;
     while i < end {
         if steps[i].kind == K_OBJECT {
-            guard conf_run_steps(s, steps, i + 1, i + 1 + steps[i].width, check, sabotage, failed) else {
+            var object = ConfObject { steps: steps, start: i + 1, end: i + 1 + steps[i].width,
+                                      check: check, sabotage: sabotage, failed: failed };
+            guard serialize_object(s, object) else {
                 return false;
             }
             i += 1 + steps[i].width;

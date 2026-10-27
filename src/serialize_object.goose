@@ -13,11 +13,16 @@ import .serialize_stream;
 // `recursive` admits the caller's serialize calling serialize_object again
 // for a nested object (conformance/object.txt nests one).
 //
-// On a latched stream it refuses before calling; a false from the caller's
-// function latches FAILED unless another kind already latched (DESIGN.md
-// (a), The latched kinds; STANDARD.md, Failure is terminal).
+// On a latched stream it refuses before calling, so an empty object (which
+// reads nothing) refuses too. On exit it refuses when the caller's function
+// returned false OR left the stream latched (a refusal it swallowed), as the
+// C++ macro does from serialize 2.0.1 (commit 3f40cb5f). A refusal latches
+// FAILED unless another kind already latched, so an inner reason is kept
+// (DESIGN.md (a), The latched kinds; STANDARD.md, Failure is terminal).
 recursive fn serialize_object<S, T>(s: S&, object: T&) -> bool {
     guard serialize_error(s) == SERIALIZE_ERROR_NONE else { return false; }
-    guard serialize(s, object) else { return serialize_fail(s, SERIALIZE_ERROR_FAILED); }
+    guard serialize(s, object) && serialize_error(s) == SERIALIZE_ERROR_NONE else {
+        return serialize_fail(s, SERIALIZE_ERROR_FAILED);
+    }
     return true;
 }

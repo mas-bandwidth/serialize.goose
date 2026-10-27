@@ -151,6 +151,59 @@ fn TestSmoke() {
     assert(serialize_bytes_processed(measure) == 3);
 }
 
+// Objects for TestSmokeObjectTerminal: one that reads nothing, and one that
+// swallows its own refusal and returns true.
+struct SmokeEmpty { called: bool }
+
+fn serialize<S>(s: S&, o: SmokeEmpty&) -> bool {
+    o.called = true;
+    return true;
+}
+
+struct SmokeSwallow { v: i32 }
+
+fn serialize<S>(s: S&, o: SmokeSwallow&) -> bool {
+    serialize_int(s, o.v, 0, 10);
+    return true;
+}
+
+// serialize_object refuses on entry and on exit (serialize 2.0.1, object read
+// terminality): a refused stream refuses an empty object without calling its
+// serialize, a refusal the object swallowed still refuses the object with
+// the inner reason kept, and a healthy empty object at the exact end of the
+// data is accepted.
+fn TestSmokeObjectTerminal() {
+    var slack: u8[8] = [0; 8];
+    var latched = serialize_read_stream_init(slack, 0);
+    var v: u8 = 7;
+    assert(!serialize_uint8(latched, v));
+    var empty = SmokeEmpty { called: false };
+    assert(!serialize_object(latched, empty));
+    assert(!empty.called);
+    assert(serialize_error(latched) == SERIALIZE_ERROR_PAST_END);
+
+    // 0xFF: the swallowed int reads 4 bits, 15, out of [0, 10].
+    var data: u8[9] = [0xFF, 0, 0, 0, 0, 0, 0, 0, 0];
+    var r = serialize_read_stream_init(data, 1);
+    var swallow = SmokeSwallow { v: -77 };
+    assert(!serialize_object(r, swallow));
+    assert(swallow.v == -77);
+    assert(serialize_error(r) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+    var after = SmokeEmpty { called: false };
+    assert(!serialize_object(r, after));
+    assert(!after.called);
+    assert(serialize_error(r) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+
+    var exact = serialize_read_stream_init(data, 1);
+    var byte: u32 = 0;
+    assert(serialize_bits(exact, byte, 8));
+    var at_end = SmokeEmpty { called: false };
+    assert(serialize_object(exact, at_end));
+    assert(at_end.called);
+    assert(serialize_error(exact) == SERIALIZE_ERROR_NONE);
+    assert(serialize_end(exact));
+}
+
 // API misuse aborts naming its rule (DESIGN.md (e)): proved through the
 // runner by its exit and its message. Every family is implemented now, so the
 // probe submits an out-of-range bit count rather than a family stub.
