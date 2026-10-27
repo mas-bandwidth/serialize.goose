@@ -15,16 +15,16 @@ supplied the shape of this page. Both are read, never imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`,
 `conformance/*.txt` and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at commit 3617d3606db9c5686018d6568f0aa761869083c5,
-the 2.0.1 corpus (format 2.0 still). Against v2.0.0
-(`8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`) only `conformance/object.txt`
-and `conformance/sequence.txt` differ: commit `3f40cb5f` (object read
-terminality) gave three refusal vectors a `param step = object 0`
-successor, so an empty nested object after a refusal must refuse too.
-STANDARD.md, IMPLEMENTING.md and conformance-controls/ are v2.0.0's bytes.
-None of them is edited here; a change arrives by re-vendoring from a new tag
-or commit, `tools/revendor.sh <ref>`, and the corpus job in ci.yml diffs all
-four against the pin.
+VERBATIM from mas-bandwidth/serialize at tag v2.0.1
+(`b812b75cc0a75dd925af74103ab1f155b9431ac1`), format 2.0 still. Against
+v2.0.0 (`8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`) STANDARD.md and
+IMPLEMENTING.md are the same bytes; commit `3f40cb5f` (object read
+terminality) gave three refusal vectors in `conformance/object.txt` and
+`conformance/sequence.txt` a `param step = object 0` successor, so an empty
+nested object after a refusal must refuse too, and added
+`conformance-controls/object-terminal.expected`. None of them is edited
+here; a change arrives by re-vendoring from a new tag, `tools/revendor.sh
+<tag>`, and the corpus job in ci.yml diffs all four against the tag.
 
 **The pin.** Goose v2026.2 (aardappel/goose tag v2026.2, annotated tag object
 `7ad96d6d47f979bb9bcc3d51f610d65efba8335e`, commit
