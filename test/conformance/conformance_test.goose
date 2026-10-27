@@ -592,14 +592,16 @@ fn conf_run_step(s: MeasureStream&, st: Step&, check: bool, sabotage: i64) -> bo
 // An `object N` step, handed to the library's serialize_object: its own
 // serialize is the N nested steps. The library, not the runner, decides that
 // an object on a refused stream refuses, even an empty one (`object 0`, which
-// reads nothing; serialize 2.0.1, object read terminality).
+// reads nothing; serialize 2.0.1, object read terminality). It holds copies:
+// a reference may not be stored inside a recursive cycle (Goose spec 7.8),
+// so the caller copies steps and failed back after the call.
 struct ConfObject {
-    steps: Step[64]&,
+    steps: Step[64],
     start: i64,
     end: i64,
     check: bool,
     sabotage: i64,
-    failed: i64&,
+    failed: i64,
 }
 
 recursive fn serialize<S>(s: S&, o: ConfObject&) -> bool {
@@ -617,7 +619,10 @@ recursive fn conf_run_steps<S>(s: S&, steps: Step[64]&, start: i64, end: i64,
         if steps[i].kind == K_OBJECT {
             var object = ConfObject { steps: steps, start: i + 1, end: i + 1 + steps[i].width,
                                       check: check, sabotage: sabotage, failed: failed };
-            guard serialize_object(s, object) else {
+            let accepted = serialize_object(s, object);
+            steps = object.steps;
+            failed = object.failed;
+            guard accepted else {
                 return false;
             }
             i += 1 + steps[i].width;
