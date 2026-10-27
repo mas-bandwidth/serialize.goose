@@ -15,13 +15,16 @@ supplied the shape of this page. Both are read, never imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`,
 `conformance/*.txt` and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.0.0
-(`8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`, the merge of the format 2.0 pin
-`dedf58efa93832fd243dbf3a2a1ca0a91c46b14b`, whose copies are the same bytes:
-`git diff dedf58e v2.0.0 -- STANDARD.md IMPLEMENTING.md conformance
-conformance-controls` is empty, checked 2026-10-22). None of them is edited
-here; a change arrives by re-vendoring from a new tag, `tools/revendor.sh
-<tag>`, and the corpus job in ci.yml diffs all four against the tag.
+VERBATIM from mas-bandwidth/serialize at commit 3617d3606db9c5686018d6568f0aa761869083c5,
+the 2.0.1 corpus (format 2.0 still). Against v2.0.0
+(`8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`) only `conformance/object.txt`
+and `conformance/sequence.txt` differ: commit `3f40cb5f` (object read
+terminality) gave three refusal vectors a `param step = object 0`
+successor, so an empty nested object after a refusal must refuse too.
+STANDARD.md, IMPLEMENTING.md and conformance-controls/ are v2.0.0's bytes.
+None of them is edited here; a change arrives by re-vendoring from a new tag
+or commit, `tools/revendor.sh <ref>`, and the corpus job in ci.yml diffs all
+four against the pin.
 
 **The pin.** Goose v2026.2 (aardappel/goose tag v2026.2, annotated tag object
 `7ad96d6d47f979bb9bcc3d51f610d65efba8335e`, commit

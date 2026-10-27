@@ -47,9 +47,10 @@ runs_make() {
 		grep -vE '^[0-9]+:[[:space:]]*#' >/dev/null
 }
 
-# a_tag LINE extracts the first vX.Y.Z from a FILE:LINE record, or empty.
+# a_tag LINE extracts the first corpus pin from a FILE:LINE record: a vX.Y.Z
+# tag or a full 40-digit commit sha, or empty.
 a_tag() {
-	printf '%s\n' "$1" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1
+	printf '%s\n' "$1" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+|[0-9a-f]{40}' | head -1
 }
 
 check_file() {
@@ -83,7 +84,7 @@ EOF_PIN
 	ci_line=$(grep -nE '^[[:space:]]*SERIALIZE_TAG:' "$target_ci" | head -1)
 	ci_lineno=$(printf '%s\n' "$ci_line" | cut -d: -f1)
 	ci_tag=$(a_tag "$ci_line")
-	design_line=$(grep -nE 'VERBATIM from mas-bandwidth/serialize at tag' "$design" | head -1)
+	design_line=$(grep -nE 'VERBATIM from mas-bandwidth/serialize at (tag|commit)' "$design" | head -1)
 	design_lineno=$(printf '%s\n' "$design_line" | cut -d: -f1)
 	design_tag=$(a_tag "$design_line")
 	case "$ci_tag" in
