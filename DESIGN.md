@@ -15,11 +15,14 @@ supplied the shape of this page. Both are read, never imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`,
 `conformance/*.txt` and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.0.0
-(`8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`, the merge of the format 2.0 pin
-`dedf58efa93832fd243dbf3a2a1ca0a91c46b14b`, whose copies are the same bytes:
-`git diff dedf58e v2.0.0 -- STANDARD.md IMPLEMENTING.md conformance
-conformance-controls` is empty, checked 2026-10-22). None of them is edited
+VERBATIM from mas-bandwidth/serialize at tag v2.0.1
+(`b812b75cc0a75dd925af74103ab1f155b9431ac1`), format 2.0 still. Against
+v2.0.0 (`8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`) STANDARD.md and
+IMPLEMENTING.md are the same bytes; commit `3f40cb5f` (object read
+terminality) gave three refusal vectors in `conformance/object.txt` and
+`conformance/sequence.txt` a `param step = object 0` successor, so an empty
+nested object after a refusal must refuse too, and added
+`conformance-controls/object-terminal.expected`. None of them is edited
 here; a change arrives by re-vendoring from a new tag, `tools/revendor.sh
 <tag>`, and the corpus job in ci.yml diffs all four against the tag.
 
