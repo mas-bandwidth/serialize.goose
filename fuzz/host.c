@@ -189,16 +189,20 @@ static long cov_edge_min, cov_edge_min_plus, cov_edge_max_minus, cov_edge_max, c
 
 typedef struct { int integer_bits, fraction_bits; int64_t mn, mx; } FixedDecl;
 
-/* fraction_bits -1 is the pre-existing random declaration (fraction 0). */
+/* fraction_bits -1 is the pre-existing random declaration (fraction 0).
+   Every declaration fits its Q format: whole units in [-2^(integer_bits-1),
+   2^(integer_bits-1) - 1], any int64 from 64 integer bits up (IMPLEMENTING.md
+   U16; the C++ reference's compile error). The encoded widths above 32 and 64
+   bits come from the wider storage that can hold them. */
 static const FixedDecl fixed32_decls[] = {
     { 32, -1, 0, 0 },
     { 8, 8, -100, 100 },
     { 16, 16, -32768, 32767 },
     { 16, 16, -16384, 16383 },
-    { 16, 16, -32768, 32768 },
+    { 17, 15, -65536, 65535 },
     { 24, 8, -100000, 100000 },
     { 31, 1, -1000000000, 1000000000 },
-    { 1, 31, 0, 1 },
+    { 1, 31, -1, 0 },
     { 16, 16, 7, 7 },
     { 8, 8, -9, -9 },
     { 32, 0, -2147483647 - 1, 2147483647 },
@@ -210,11 +214,11 @@ static const FixedDecl fixed64_decls[] = {
     { 32, 32, -100000, 100000 },
     { 48, 16, -35184372088832LL, 35184372088832LL },
     { 48, 16, -70368744177664LL, 70368744177664LL },
-    { 48, 16, -140737488355328LL, 140737488355328LL },
-    { 32, 32, -4611686018427387904LL, 4611686018427387904LL },
-    { 32, 32, -2305843009213693952LL, 2305843009213693952LL },
-    { 1, 63, 0, 1 },
-    { 63, 1, -9223372036854775807LL - 1, 9223372036854775807LL },
+    { 48, 16, -32768, 32768 },
+    { 32, 32, -2147483647LL - 1, 2147483647LL },
+    { 32, 32, -1073741824LL, 1073741823LL },
+    { 1, 63, -1, 0 },
+    { 63, 1, -4611686018427387904LL, 4611686018427387903LL },
     { 32, 32, -9, -9 },
     { 64, 0, -9223372036854775807LL - 1, 9223372036854775807LL },
     { 16, 48, -1000, 1000 },
@@ -229,7 +233,7 @@ static const FixedDecl fixed128_decls[] = {
     { 96, 32, -4611686018427387904LL, 4611686018427387904LL },
     { 64, 64, 0, 4294967296LL },
     { 64, 64, -4611686018427387904LL, 4611686018427387904LL },
-    { 1, 127, 0, 1 },
+    { 1, 127, -1, 0 },
     { 112, 16, 0, 281474976710656LL },
     { 112, 16, -2000, 2000 },
     { 120, 8, -1000000, 1000000 },

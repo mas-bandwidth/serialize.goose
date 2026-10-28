@@ -35,13 +35,21 @@
 #   fraction bits   the Goose fixed point raw bounds are computed with
 #                   fraction_bits forced to zero in a staged copy of src/:
 #                   fractional programs must diverge ("write bytes differ"
-#                   or "measure mismatch").
+#                   or "measure mismatch"), or the sabotaged writer must
+#                   abort an in-range value as outside its wrongly computed
+#                   bounds ("serialize: value must be in [min, max]": write
+#                   misuse aborts from 2.1, IMPLEMENTING.md U9).
 #   high group      one high 32-bit group of the Goose fixed point offset
 #                   is read from the wrong lane in a staged copy of src/:
-#                   wide fixed programs must diverge ("write bytes differ").
-#   optimized       the optimized driver is built from the fraction-sabotaged
-#                   stage: the host's debug/optimized comparison must refuse
-#                   it ("optimized driver output differs").
+#                   wide fixed programs must diverge ("write bytes differ"),
+#                   or the wrong lane must hand a group's bits a value too
+#                   wide for them, which aborts ("serialize: value must fit
+#                   in bits": write misuse aborts from 2.1, U8, U9).
+#   optimized       the optimized driver is built from the reader-range
+#                   sabotaged stage, whose reader accepts what the debug
+#                   driver refuses, without aborting: the host's
+#                   debug/optimized comparison must refuse it ("optimized
+#                   driver output differs").
 # A sabotage whose needle no longer matches src/ fails by name, never a skip.
 # An optimized build that fails is a hard failure naming the platform
 # blocker, never a skip: optimized parity is either proven or reported.
@@ -172,11 +180,11 @@ fuzz: fuzz-host fuzz-driver fuzz-driver-opt
 		>$(FUZZ_BUILD)/frac.log 2>&1; then \
 		echo "negative control (fraction bits) DID NOT go red"; exit 1; \
 	elif ! grep -q -- '--- FAIL TestDifferentialAgainstSerializeC' $(FUZZ_BUILD)/frac.log || \
-		! grep -qE 'write bytes differ|measure mismatch' $(FUZZ_BUILD)/frac.log; then \
+		! grep -qE 'write bytes differ|measure mismatch|serialize: value must be in \[min, max\]' $(FUZZ_BUILD)/frac.log; then \
 		cat $(FUZZ_BUILD)/frac.log; \
 		echo "negative control (fraction bits) went red for the wrong reason"; exit 1; \
 	else \
-		echo "negative control (fraction bits): RED as required ($$(grep -m1 -E 'write bytes differ|measure mismatch' $(FUZZ_BUILD)/frac.log))"; \
+		echo "negative control (fraction bits): RED as required ($$(grep -m1 -E 'write bytes differ|measure mismatch|serialize: value must be in \[min, max\]' $(FUZZ_BUILD)/frac.log))"; \
 	fi
 	@echo "negative control (high group): one high 32-bit group of the Goose fixed offset comes from the wrong lane"
 	@$(call fuzz_stage,$(FUZZ_BUILD)/stage-group)
@@ -189,15 +197,15 @@ fuzz: fuzz-host fuzz-driver fuzz-driver-opt
 	@if $(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver-group --tmp $(FUZZ_WORK) --programs 1000 \
 		>$(FUZZ_BUILD)/group.log 2>&1; then \
 		echo "negative control (high group) DID NOT go red"; exit 1; \
-	elif ! grep -q 'write bytes differ' $(FUZZ_BUILD)/group.log || \
+	elif ! grep -qE 'write bytes differ|serialize: value must fit in bits' $(FUZZ_BUILD)/group.log || \
 		! grep -q -- '--- FAIL TestDifferentialAgainstSerializeC' $(FUZZ_BUILD)/group.log; then \
 		cat $(FUZZ_BUILD)/group.log; \
 		echo "negative control (high group) went red for the wrong reason"; exit 1; \
 	else \
-		echo "negative control (high group): RED as required ($$(grep -m1 'write bytes differ' $(FUZZ_BUILD)/group.log))"; \
+		echo "negative control (high group): RED as required ($$(grep -m1 -E 'write bytes differ|serialize: value must fit in bits' $(FUZZ_BUILD)/group.log))"; \
 	fi
-	@echo "negative control (optimized): the optimized driver is built from the fraction-sabotaged stage"
-	@$(call fuzz_build_opt,$(FUZZ_BUILD)/stage-frac,$(FUZZ_BUILD)/driver-optbad)
+	@echo "negative control (optimized): the optimized driver is built from the reader-range sabotaged stage"
+	@$(call fuzz_build_opt,$(FUZZ_BUILD)/stage-norange,$(FUZZ_BUILD)/driver-optbad)
 	@if $(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver --driver-opt $(FUZZ_BUILD)/driver-optbad --tmp $(FUZZ_WORK) --programs 1000 \
 		>$(FUZZ_BUILD)/opt.log 2>&1; then \
 		echo "negative control (optimized) DID NOT go red"; exit 1; \
