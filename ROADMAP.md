@@ -11,7 +11,7 @@ The Goose port of serialize, the open-source bitpacking serializer: the same wir
 | feature | goose |
 |---|:---:|
 | Design, family stubs and test runner | ✅ |
-| STANDARD.md matches serialize v2.1.0 | ✅ |
+| STANDARD.md matches serialize v2.1.1 | ✅ |
 | The rejected reason and the uniform rules U1 to U16 | ✅ |
 | The 2.1.1 rulings: one write-misuse trap (U9), measure checks (U6), copy_string and exports (U15) | ✅ |
 | Format 2.0: refusal reasons, finite floats, end, canonical int_relative, no wstring | ✅ |

@@ -15,9 +15,12 @@ supplied the shape of this page. Both are read, never imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`,
 `conformance/*.txt` and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.0
-(`884bc3098c9619d67308d9c6b5cdf38593d98b69`, 2026-10-27, the merge of the
-`rejected` reason after the audit fixes it carries), format 2.0 still. 2.1
+VERBATIM from mas-bandwidth/serialize at tag v2.1.1
+(`bd3d67e23c8acc2c45eff69633dbe16c029a2cba`, 2026-10-28, the merge of the
+2.1.1 rulings), format 2.0 still. 2.1.1 changed IMPLEMENTING.md only: one
+write-misuse mechanism, the trap (U9), a measure making every write check
+(U6), lone surrogates as write misuse (U3), the copy_string back-off and the
+exports ruling (U15); the corpus and STANDARD.md are 2.1.0's. 2.1
 added the `rejected` refusal reason and the `reject` sequence step, the
 uniform implementation rules U1 to U16 in IMPLEMENTING.md, sNaN-shaped float
 and double neighbour vectors, a compressed_float top integer that decodes
@@ -145,7 +148,7 @@ echoes and keep it, and `serialize_fail` with a kind on a latched stream
 returns false and changes nothing. A refused read stream never reports NONE.
 A latch persists until the stream is re-initialized (assigned a fresh init).
 The latch is the reference's model, `tla/ReadStreamLatch.tla` in
-mas-bandwidth/serialize v2.1.0, checked with TLC: refused exactly when a
+mas-bandwidth/serialize v2.1.1, checked with TLC: refused exactly when a
 reason is recorded, the reason never changes once recorded, no read succeeds
 after a refusal. A write or a measure refuses nothing and latches nothing (U6,
 U9): `serialize_fail` on one returns false and records nothing, a nested

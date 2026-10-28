@@ -20,7 +20,7 @@
    :text ("The Goose port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The families and the conformance runner are on main (PR #2, PR #3, 2026-10-22); format 2.0 landed with PR #5 (2026-10-22); the reference 2.1.0 standard, the rejected reason and the uniform rules U1-U16 landed with PR #10 (2026-10-27); the 2.1.1 rulings (one write-misuse trap, measure checks, copy_string, exports) landed with PR #11 (2026-10-27).")
    :rows
    (("design" "Design, family stubs and test runner")
-    ("standard" "STANDARD.md matches serialize v2.1.0")
+    ("standard" "STANDARD.md matches serialize v2.1.1")
     ("uniform" "The rejected reason and the uniform rules U1 to U16")
     ("rulings" "The 2.1.1 rulings: one write-misuse trap (U9), measure checks (U6), copy_string and exports (U15)")
     ("format2" "Format 2.0: refusal reasons, finite floats, end, canonical int_relative, no wstring")
@@ -58,7 +58,8 @@
   (:id "serialize-goose-standard-matches-upstream" :type :task :title "STANDARD.md matches serialize v1.17.0" :state :done :evidence ("land commit ca44b72a107c on sprint/serialize-goose (card serialize-goose-standard-matches-upstream, stream serialize-goose)"))
   (:id "serialize-goose-standard-2-0" :type :task :title "STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match serialize v2.0.0" :state :done :evidence ("PR #5 on main (branch rowan/format-2.0): the corpus job diffs all four against tag v2.0.0 in CI on the fleet runners"))
   (:id "serialize-goose-standard-2-1" :type :task :title "STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match serialize v2.1.0" :state :done :evidence ("PR #10 (branch rowan/2.1.0): re-vendored from tag v2.1.0, commit 884bc3098c96; the corpus job diffs all four against the tag; TestConformanceCorpus 413 of 413, 19 of 19 controls exact"))
-  (:id "port/standard" :type :work-set :children ("serialize-goose-standard-matches-upstream" "serialize-goose-standard-2-0" "serialize-goose-standard-2-1"))
+  (:id "serialize-goose-standard-2-1-1" :type :task :title "STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match serialize v2.1.1" :state :done :evidence ("PR #11 (branch rowan/2.1.1-rulings): re-vendored from tag v2.1.1, commit bd3d67e23c8a; IMPLEMENTING.md changed, the corpus did not; the corpus job diffs all four against the tag"))
+  (:id "port/standard" :type :work-set :children ("serialize-goose-standard-matches-upstream" "serialize-goose-standard-2-0" "serialize-goose-standard-2-1" "serialize-goose-standard-2-1-1"))
   (:id "serialize-goose-uniform-2-1" :type :task :title "The rejected reason and the uniform rules U1 to U16" :state :done :evidence ("PR #10 (branch rowan/2.1.0): test/uniform proves U2-U16, red before the fix; the audit ledger's H (limited-builder string trap), M (fixed Q bounds) and L (precomputed measure) fixed with reproducer tests; object-latch-rejected and reject-reason controls exact"))
   (:id "port/uniform" :type :work-set :children ("serialize-goose-uniform-2-1"))
   (:id "serialize-goose-rulings-2-1-1" :type :task :title "The 2.1.1 rulings: one write-misuse trap (U9), measure checks (U6), copy_string and exports (U15)" :state :done :evidence ("PR #11 (branch rowan/2.1.1-rulings): test/uniform/rulings_test.goose, 25 tests, 24 red on main before the fix; a write past the end aborts naming the whole width, fail/reject/object on a write record nothing or abort, a measure makes every write value check, copy_string backs off to a whole character; witnesses 58 of 58"))
