@@ -143,43 +143,24 @@ fn TestU9CompressedFloatNonFiniteWriteAborts() {
     serialize_compressed_float(w, serialize_f32_from_bits(0x7F800000), 0.0, 1.0, 0.1);
 }
 
-// fail on a write or a measure returns false and never aborts, the kind
-// NONE included.
+// fail on a write or a measure returns false, never aborts and records
+// nothing, the kind NONE included.
 fn TestU9FailOnWriteAndMeasureNeverAborts() {
     var buf: u8[8] = [0; 8];
     var w = serialize_write_stream_init(buf);
     assert(!serialize_fail(w, SERIALIZE_ERROR_NONE));
-    assert(serialize_error(w) != SERIALIZE_ERROR_NONE);
+    assert(serialize_error(w) == SERIALIZE_ERROR_NONE);
     var m = serialize_measure_stream_init();
     assert(!serialize_fail(m, SERIALIZE_ERROR_NONE));
     assert(!serialize_fail(m));
 }
 
 // ---- U10: a write checks room for the whole operation first ---------------
-
-// 60 bits written: the string's 4 length bits fit, its 16-bit payload does
-// not. Nothing of it may be written.
-fn TestU10StringWriteChecksWholeRoomFirst() {
-    var buf: u8[8] = [0; 8];
-    var w = serialize_write_stream_init(buf);
-    assert(serialize_bits(w, 0, 30));
-    assert(serialize_bits(w, 0, 30));
-    assert(!serialize_string(w, "ab", 16));
-    assert(serialize_error(w) == SERIALIZE_ERROR_PAST_END);
-    assert(serialize_bits_processed(w) == 60);
-}
-
-// 57 bits written: the 7 align bits fit, the byte does not.
-fn TestU10BytesWriteChecksWholeRoomFirst() {
-    var buf: u8[8] = [0; 8];
-    var w = serialize_write_stream_init(buf);
-    assert(serialize_bits(w, 0, 30));
-    assert(serialize_bits(w, 0, 27));
-    let one: u8[1] = [0x5A];
-    assert(!serialize_bytes(w, one));
-    assert(serialize_error(w) == SERIALIZE_ERROR_PAST_END);
-    assert(serialize_bits_processed(w) == 57);
-}
+//
+// A write that does not fit aborts (U9), so the proof is the abort's width:
+// the whole operation's, never the part that fits
+// (TestU10StringWritePastEndAbortsOnTheWholeOperation and its siblings in
+// rulings_test.goose).
 
 // ---- U12: end on a write or a measure is a no-op returning true ------------
 
@@ -187,6 +168,7 @@ fn TestU12EndOnWriteAndMeasureIsTrue() {
     var buf: u8[8] = [0; 8];
     var w = serialize_write_stream_init(buf);
     assert(!serialize_fail(w, SERIALIZE_ERROR_PAST_END));
+    assert(serialize_error(w) == SERIALIZE_ERROR_NONE);
     assert(serialize_end(w));
     assert(serialize_bits_processed(w) == 0);
     var m = serialize_measure_stream_init();

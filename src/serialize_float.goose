@@ -45,14 +45,13 @@ fn serialize_double_bits_are_finite(bits: u64) -> bool {
 }
 
 // float: the 32 bits of the IEEE 754 binary32 pattern (STANDARD.md, float).
-// Finite values only: a writer handed NaN or an infinity aborts (write
-// misuse, U9) and writes nothing, and a reader refuses a non-finite
+// Finite values only: a writer or a measure handed NaN or an infinity aborts
+// (write misuse, U6, U9) and writes nothing, and a reader refuses a non-finite
 // pattern as NON_FINITE_FLOAT BEFORE the destination is written. -0 and the
 // subnormals are finite and keep their exact bits.
 fn serialize_float(s: WriteStream&, value: f32) -> bool {
     let pattern = serialize_f32_bits(value);
     guard serialize_float_bits_are_finite(pattern) else { abort("serialize: float must be finite"); }
-    guard s.error == SERIALIZE_ERROR_NONE else { return false; }
     return serialize_bits(s, pattern, 32);
 }
 fn serialize_float(s: ReadStream&, value: f32&) -> bool {
@@ -63,6 +62,7 @@ fn serialize_float(s: ReadStream&, value: f32&) -> bool {
     return true;
 }
 fn serialize_float(s: MeasureStream&, value: f32) -> bool {
+    guard serialize_float_bits_are_finite(serialize_f32_bits(value)) else { abort("serialize: float must be finite"); }
     return serialize_bits(s, 0, 32);
 }
 
@@ -71,7 +71,6 @@ fn serialize_float(s: MeasureStream&, value: f32) -> bool {
 fn serialize_double(s: WriteStream&, value: f64) -> bool {
     let pattern = serialize_f64_bits(value);
     guard serialize_double_bits_are_finite(pattern) else { abort("serialize: double must be finite"); }
-    guard s.error == SERIALIZE_ERROR_NONE else { return false; }
     return serialize_uint64(s, pattern);
 }
 fn serialize_double(s: ReadStream&, value: f64&) -> bool {
@@ -82,5 +81,6 @@ fn serialize_double(s: ReadStream&, value: f64&) -> bool {
     return true;
 }
 fn serialize_double(s: MeasureStream&, value: f64) -> bool {
+    guard serialize_double_bits_are_finite(serialize_f64_bits(value)) else { abort("serialize: double must be finite"); }
     return serialize_uint64(s, 0);
 }

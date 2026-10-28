@@ -22,15 +22,14 @@ fn serialize_bits_required64(min: u64, max: u64) -> i64 {
 }
 
 // int: the offset value - min in bits_required(min, max) bits. On a write
-// min > max and a value outside [min,max] abort (write misuse, U9); a
-// measure checks the declaration only. On a read min > max is the caller's
+// or a measure min > max and a value outside [min,max] abort (write misuse,
+// U6, U9). On a read min > max is the caller's
 // bad declaration, refused as VALUE_OUT_OF_RANGE before any bit moves (U16).
 // The bounds are i32, so U5's int32 rule holds by type (STANDARD.md, int;
 // DESIGN.md (a), (e)).
 fn serialize_int(s: WriteStream&, value: i32, min: i32, max: i32) -> bool {
     if min > max { abort("serialize: min must not be greater than max"); }
     if value < min || value > max { abort("serialize: value must be in [min, max]"); }
-    guard s.error == SERIALIZE_ERROR_NONE else { return false; }
     let bits = serialize_bits_required(min as! u32, max as! u32);
     if bits == 0 { return true; }
     let offset = (value as! u32) - (min as! u32);
@@ -54,6 +53,7 @@ fn serialize_int(s: ReadStream&, value: i32&, min: i32, max: i32) -> bool {
 }
 fn serialize_int(s: MeasureStream&, value: i32, min: i32, max: i32) -> bool {
     if min > max { abort("serialize: min must not be greater than max"); }
+    if value < min || value > max { abort("serialize: value must be in [min, max]"); }
     return serialize_measure_add(s, serialize_bits_required(min as! u32, max as! u32));
 }
 
@@ -62,7 +62,6 @@ fn serialize_int(s: MeasureStream&, value: i32, min: i32, max: i32) -> bool {
 fn serialize_int64(s: WriteStream&, value: i64, min: i64, max: i64) -> bool {
     if min > max { abort("serialize: min must not be greater than max"); }
     if value < min || value > max { abort("serialize: value must be in [min, max]"); }
-    guard s.error == SERIALIZE_ERROR_NONE else { return false; }
     let bits = serialize_bits_required64(min as! u64, max as! u64);
     if bits == 0 { return true; }
     let offset = (value as! u64) - (min as! u64);
@@ -86,6 +85,7 @@ fn serialize_int64(s: ReadStream&, value: i64&, min: i64, max: i64) -> bool {
 }
 fn serialize_int64(s: MeasureStream&, value: i64, min: i64, max: i64) -> bool {
     if min > max { abort("serialize: min must not be greater than max"); }
+    if value < min || value > max { abort("serialize: value must be in [min, max]"); }
     return serialize_measure_add(s, serialize_bits_required64(min as! u64, max as! u64));
 }
 
@@ -96,12 +96,13 @@ fn serialize_int64(s: MeasureStream&, value: i64, min: i64, max: i64) -> bool {
 // VALUE_OUT_OF_RANGE before any bit moves (U7, U16); the
 // difference is unsigned so --debug cannot trap on it. The absolute tier
 // transmits current itself as 32 unsigned raw bits, and a reader refuses it
-// as NON_CANONICAL when the difference has a bounded tier.
+// as NON_CANONICAL when the difference has a bounded tier. The writer checks
+// room for the whole ladder before writing any of it (U10).
 fn serialize_int_relative(s: WriteStream&, previous: i32, current: i32) -> bool {
     if previous < 0 { abort("serialize: int_relative previous must be in [0, 2147483647]"); }
     if current <= previous { abort("serialize: int_relative current must be greater than previous"); }
-    guard s.error == SERIALIZE_ERROR_NONE else { return false; }
     let difference = (current as! u32) - (previous as! u32);
+    serialize_write_check(s, serialize_int_relative_bits(difference));
     if !serialize_bool(s, difference == 1) { return false; }
     if difference == 1 { return true; }
     if !serialize_bool(s, difference <= 6) { return false; }
@@ -177,7 +178,12 @@ fn serialize_int_relative(s: ReadStream&, previous: i32, current: i32&) -> bool 
 fn serialize_int_relative(s: MeasureStream&, previous: i32, current: i32) -> bool {
     if previous < 0 { abort("serialize: int_relative previous must be in [0, 2147483647]"); }
     if current <= previous { abort("serialize: int_relative current must be greater than previous"); }
-    let difference = (current as! u32) - (previous as! u32);
+    return serialize_measure_add(s, serialize_int_relative_bits((current as! u32) - (previous as! u32)));
+}
+
+// The ladder's width for a difference of at least 1: the write's room check
+// and the measure.
+fn serialize_int_relative_bits(difference: u32) -> i64 {
     var bits: i64 = 1;
     if difference != 1 {
         bits += 1;
@@ -207,5 +213,5 @@ fn serialize_int_relative(s: MeasureStream&, previous: i32, current: i32) -> boo
             }
         }
     }
-    return serialize_measure_add(s, bits);
+    return bits;
 }

@@ -520,7 +520,7 @@ fn TestSerializeEnd() {
     assert(!serialize_end(e));
     assert(serialize_error(e) == SERIALIZE_ERROR_PAST_END);
 
-    // End on a write is a no-op returning true, latched or not (U12).
+    // End on a write is a no-op returning true, after a fail too (U12).
     var wl = serialize_write_stream_init(buf);
     assert(!serialize_fail(wl, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE));
     assert(serialize_end(wl));
