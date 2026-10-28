@@ -15,14 +15,15 @@ supplied the shape of this page. Both are read, never imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`,
 `conformance/*.txt` and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.0.1
-(`b812b75cc0a75dd925af74103ab1f155b9431ac1`), format 2.0 still. Against
-v2.0.0 (`8dae4cc08b7b46c9b5fcf08dad5e99ad1348b76b`) STANDARD.md and
-IMPLEMENTING.md are the same bytes; commit `3f40cb5f` (object read
-terminality) gave three refusal vectors in `conformance/object.txt` and
-`conformance/sequence.txt` a `param step = object 0` successor, so an empty
-nested object after a refusal must refuse too, and added
-`conformance-controls/object-terminal.expected`. None of them is edited
+VERBATIM from mas-bandwidth/serialize at tag v2.1.0
+(`884bc3098c9619d67308d9c6b5cdf38593d98b69`, 2026-10-27, the merge of the
+`rejected` reason after the audit fixes it carries), format 2.0 still. 2.1
+added the `rejected` refusal reason and the `reject` sequence step, the
+uniform implementation rules U1 to U16 in IMPLEMENTING.md, sNaN-shaped float
+and double neighbour vectors, a compressed_float top integer that decodes
+above max, and the `object-latch-rejected` and `reject-reason` controls.
+(v2.0.1, `b812b75c`, commit `3f40cb5f`, gave three refusal vectors an empty
+`object 0` successor and added `object-terminal.expected`.) None of them is edited
 here; a change arrives by re-vendoring from a new tag, `tools/revendor.sh
 <tag>`, and the corpus job in ci.yml diffs all four against the tag.
 
@@ -75,7 +76,7 @@ width depends on it (int_relative, string).
 | `ReadStream` | `serialize_read_stream_t` | `{ data: const u8[:], num_bits, bits_read, error: i32 }` |
 | `MeasureStream` | `serialize_measure_stream_t` | `{ bits_written, error: i32 }` |
 | `Uint128`, `Int128` | `serialize_uint128_t`, `serialize_int128_t` | `{ lo: u64, hi: u64 }` (c) |
-| `SERIALIZE_ERROR_NONE` .. `SERIALIZE_ERROR_FAILED` | the int error flag and `serialize_refusal_t` | the latched kinds, below |
+| `SERIALIZE_ERROR_NONE` .. `SERIALIZE_ERROR_REJECTED` | the int error flag and `serialize_refusal_t` | the latched kinds, below |
 | `SERIALIZE_FORMAT_VERSION` | format version | `"2.0"` |
 
 Counts (`bits`, `bytes`, `buffer_size`, `integer_bits`) are `i64`, Goose's
@@ -91,7 +92,8 @@ length type. Every other parameter has serialize.c's width and signedness.
 | `serialize_measure_stream_init() -> MeasureStream` | `serialize_measure_stream_init` |
 | `serialize_flush(w)` | `serialize_write_flush` |
 | `serialize_error(s) -> i32` | `serialize_write_error`, `serialize_read_error` |
-| `serialize_fail(s, kind = SERIALIZE_ERROR_FAILED) -> bool` (always false) | `serialize_write_fail`, `serialize_read_fail` |
+| `serialize_fail(s, kind = SERIALIZE_ERROR_REJECTED) -> bool` (always false, never aborts) | `serialize_write_fail`, `serialize_read_fail` |
+| `serialize_reject(s) -> bool` (always false) | `serialize_read_reject`, C++ `serialize_reject` |
 | `serialize_bits_processed(s)`, `serialize_bytes_processed(s)` | `*_bits_processed`, `*_bytes_processed` |
 | `serialize_bits_available(w)`, `serialize_bits_remaining(r)` | `serialize_write_bits_available`, `serialize_read_bits_remaining` |
 | `serialize_align_bits(s)` (write, read) | `serialize_write_align_bits`, `serialize_read_align_bits` |
@@ -101,16 +103,23 @@ Initializers return the stream (Goose builds a returned value in place, so
 there is no out-pointer). `serialize_is_writing`/`serialize_is_reading` are
 not in serialize.c; they are the C++ stream's, and a generic caller needs
 them to branch (for example to fill a derived field only after a read).
-`serialize_copy_string` has no Goose form: Goose strings carry their length.
+`serialize_copy_string(dest: u8[:], source: const u8[:])` is the reference
+helper (U15): it zeroes `dest`, then copies at most `dest.len - 1` bytes of
+`source`, stopping at a zero byte; a `dest` of no bytes aborts. Flush is
+required: a write buffer's contents are unspecified until `serialize_flush`
+(U11). A stream is re-initialized by assigning it a fresh init, which clears
+its latch (U13).
 
 ### The latched kinds
 
 | kind | value | when |
 |---|---|---|
-Kinds 1 to 8 are the refusal reasons, the closed list STANDARD.md defines
+Kinds 1 to 9 are the refusal reasons, the closed list STANDARD.md defines
 under "Refusal reasons", in serialize.c's `serialize_refusal_t` order;
 `serialize_refusal_name(kind) -> const u8[:]` spells each exactly as the
-corpus does (`"past_end"`), `"none"` for NONE, `"failed"` for FAILED.
+corpus does (`"past_end"`, `"rejected"`), `"none"` for NONE (U14).
+`SERIALIZE_ERROR_FAILED`, the 2.0 spelling of the caller's refusal, is kept
+as another name for `SERIALIZE_ERROR_REJECTED`.
 
 | kind | value | name | when |
 |---|---|---|---|
@@ -123,12 +132,19 @@ corpus does (`"past_end"`), `"none"` for NONE, `"failed"` for FAILED.
 | `SERIALIZE_ERROR_INVALID_UTF8` | 6 | `invalid_utf8` | a string payload that is not well-formed UTF-8 |
 | `SERIALIZE_ERROR_EMBEDDED_NUL` | 7 | `embedded_nul` | a zero byte in a string payload (scanned before the encoding) |
 | `SERIALIZE_ERROR_NON_CANONICAL` | 8 | `non_canonical` | the int_relative absolute tier carrying a difference a bounded tier carries |
-| `SERIALIZE_ERROR_FAILED` | 9 | `failed` | `serialize_fail` by the caller, or an object's `serialize` returning false: the caller's own, not a reason the library refuses for |
+| `SERIALIZE_ERROR_REJECTED` | 9 | `rejected` | the caller's own refusal of well formed bytes (2.1, U2): `serialize_reject`, `serialize_fail` with NONE or a kind outside the list, or an object's `serialize` returning false with nothing latched |
 
 The first latched kind sticks: the later refusals of a failed stream are
 echoes and keep it, and `serialize_fail` with a kind on a latched stream
-returns false and changes nothing. A latch persists until the stream is
-re-initialized (assigned a fresh init).
+returns false and changes nothing. A refused read stream never reports NONE.
+A latch persists until the stream is re-initialized (assigned a fresh init).
+The latch is the reference's model, `tla/ReadStreamLatch.tla` in
+mas-bandwidth/serialize v2.1.0, checked with TLC: refused exactly when a
+reason is recorded, the reason never changes once recorded, no read succeeds
+after a refusal. A measure refuses nothing and latches nothing (U6):
+`serialize_fail` and `serialize_reject` on one return false and record
+nothing. `serialize_reject` is read only; on a write it sets the write
+stream's error flag to REJECTED and returns false, never aborting (U9).
 
 ### The operations (one name, three overloads each)
 
@@ -177,8 +193,8 @@ Format 2.0 removed wstring: text is UTF-8 and only UTF-8.
 the C++ library's macro, STANDARD.md object: it calls the caller's own
 `serialize(s, object)` overload inline, as the example above declares one,
 and contributes no bytes. On a latched stream it refuses before calling; a
-false from the caller's function latches `SERIALIZE_ERROR_FAILED` unless
-something already latched.
+false from the caller's function latches `SERIALIZE_ERROR_REJECTED` unless
+something already latched (U2).
 
 ### Helpers
 
@@ -194,23 +210,43 @@ something already latched.
 | `serialize_compressed_float_params(min, max, res) -> u32, i64, f32` (max_integer_value, bits, delta) | the same, out-pointers as results | compressed_float |
 | `serialize_f32_bits`, `serialize_f32_from_bits`, `serialize_f64_bits`, `serialize_f64_from_bits` | memcpy in the C | float |
 
-### API misuse aborts, naming the rule
+### Write misuse aborts, naming the rule; read misuse is refused
 
-Exactly where serialize.c asserts on its caller's own arguments, this port
-aborts (`abort("serialize: <rule>")`, which prints `goose runtime error: serialize: <rule> (<file>:<line>)` and exits 1) in every build: a bits count
-outside the entry point's width (`serialize: bits must be in [1,32]`,
-`[1,64]`), `min > max` (`serialize: min must not be greater than max`), a bad
-Q format (`serialize: integer_bits + fraction_bits must equal the storage width`), a write buffer whose length is not a multiple of 8 (`serialize: write buffer bytes must be a multiple of 8`), read data without its 8-byte slack
-(d), a non-finite compressed float value on write (STANDARD.md
-compressed_float, non-finite inputs are non-conforming), an int_relative
-`previous` outside [0, 2^31 - 1], a string read destination whose capacity is
-below `buffer_size - 1`. The abort comes before the latch check: misuse is
-misuse on a latched stream too. A misuse abort is decided only by the
-caller's own arguments, never by data (e).
+Goose has no build in which a check is compiled out, so this port is an
+always-checked implementation (IMPLEMENTING.md, The check model). Its one
+write-misuse mechanism (U9) is the abort (`abort("serialize: <rule>")`, which
+prints `goose runtime error: serialize: <rule> (<file>:<line>)` and exits 1),
+applied to every operation on a write, and to every declaration on a measure:
 
-Deviation: serialize.c's write buffer must be a multiple of 4 bytes; this
-port requires 8, because the packer commits whole 64-bit words and a Goose
-slice store past its end aborts rather than scribbling (the card's rule).
+- declarations: a bits count outside the entry point's width (`serialize:
+  bits must be in [1,32]`, `[1,64]`), `min > max` (`serialize: min must not
+  be greater than max`), a bad Q format (`serialize: integer_bits +
+  fraction_bits must equal the storage width`), fixed bounds outside the Q
+  format (`serialize: fixed min and max must fit the Q format`), a bad
+  compressed_float declaration or precomputed constants, a string
+  `buffer_size` below 1, an int_relative `previous` outside [0, 2^31 - 1], a
+  write buffer whose length is not a multiple of 8 (U1);
+- values, on a write only: a value too wide for its bits (`serialize: value
+  must fit in bits`, U8), a ranged value outside [min, max] (`serialize: value
+  must be in [min, max]`), a non-finite float, double or compressed_float, a
+  string that does not fit `buffer_size - 1`, holds a zero byte or is not
+  well-formed UTF-8 (U4; a measure checks the string too, U3), an
+  int_relative `current` not above `previous`.
+
+The abort comes before the latch check: misuse is misuse on a latched
+stream too. `serialize_fail` and `serialize_reject` never abort (U9).
+
+On a READ the same declarations are the caller's, and a reader never traps
+(U7, U16): a bits count out of range, `min > max`, a bad Q format or bounds
+outside it, a bad compressed_float declaration or precomputed constants, a
+string `buffer_size` below 1 or above a limited builder's capacity plus one,
+an int_relative `previous` outside its domain, a negative `bytes` or read
+data without its 8-byte slack (d) each refuse as `value_out_of_range` before
+any bit moves, and keep a reason already latched. Either way the outcome is
+decided only by the caller's own arguments, never by data (e).
+
+The write buffer is a multiple of 8 bytes, as serialize.c's is from 2.0.2
+(U1): the packer commits whole 64-bit words.
 
 ## (b) BIT ORDER AND ENDIANNESS
 
@@ -373,16 +409,14 @@ Measured on hetzner2 and hulk, 2026-10-19, at the pin:
 ## (e) WRITER AND READER
 
 **The writer is STRICT.** For every value it emits exactly the bytes
-serialize.c v2.0.0 emits, byte for byte. Where serialize.c's write stream
-fails (a value outside [min,max], a non-finite float, a full buffer) this
-port latches the same error (`SERIALIZE_ERROR_VALUE_OUT_OF_RANGE`,
-`SERIALIZE_ERROR_NON_FINITE_FLOAT`, `SERIALIZE_ERROR_PAST_END`) and
-writes nothing for that call: every check covers the whole operation's width
-before any bit moves. API misuse serialize.c asserts on aborts naming the rule
-(a). (serialize.c checks neither of the latched cases in a release build, by
-STANDARD.md's writes-trusted doctrine; Goose's checked slice stores would
-abort on a full buffer anyway, so the latch is the language's minimum and the
-card's rule.)
+serialize.c v2.0.0 emits, byte for byte. Every write misuse serialize.c
+asserts on aborts naming the rule (a), a value outside [min,max] and a
+non-finite float included (U9). A full buffer latches
+`SERIALIZE_ERROR_PAST_END` on the write stream's error flag (the C write
+error flag, an allowed extra, U15) and writes nothing for that call: every
+check covers the whole operation's width, a string's length, align and
+payload together, before any bit moves (U10). Goose's checked slice stores
+would abort on a full buffer anyway, so the flag is the language's minimum.
 
 **Reads forgive nothing.** Format 2.0 gives every value exactly one
 encoding: the trailing bits of the last byte, and any byte after the object,
@@ -427,18 +461,20 @@ of which is the latch, the gate and one packer call. A family arm uses only:
 | primitive | stream | what |
 |---|---|---|
 | `s.error != SERIALIZE_ERROR_NONE` | all | latched |
-| `serialize_fail(s, kind) -> false` | all | latch kind (the first sticks) |
+| `serialize_fail(s, kind) -> false` | all | latch kind on a read or write (the first sticks; NONE or a kind outside the list records REJECTED); a measure records nothing |
 | `serialize_read_check(r, bits) -> bool` | read | false when latched; latches PAST_END past the end |
 | `serialize_write_check(w, bits) -> bool` | write | false when latched; latches PAST_END when the buffer is full |
-| `serialize_measure_add(m, bits) -> bool` | measure | adds bits; false only when latched |
+| `serialize_measure_add(m, bits) -> bool` | measure | adds bits; always true (a measure refuses nothing, U6) |
 | `serialize_packer_write(w, value: u64, bits)` | write | bits in [1,64], value < 2^bits, already checked |
 | `serialize_packer_read(r, bits) -> u64` | read | bits in [1,64], already checked |
 | `serialize_packer_write_bytes(w, data)`, `serialize_packer_read_bytes(r, data)` | write, read | an aligned run, already checked |
 | `serialize_bits`, `serialize_bool`, `serialize_align`, `serialize_int`, ... | all | an arm may call public operations (int_relative's bool and int, string's int and bytes), as serialize.c does |
 
-An arm does the whole operation in this order: abort on API misuse; refuse
-on a latched stream; the value or data refusals; the gate for the whole width;
-then the bits; a read assigns its destination last.
+An arm does the whole operation in this order: on a write or a measure,
+abort on misuse (the declaration, then a write's value); refuse on a latched
+stream; on a read, refuse a bad declaration as VALUE_OUT_OF_RANGE (U16), then
+the data refusals; the gate for the whole width; then the bits; a read
+assigns its destination last.
 
 ## (f) THE FILE LAYOUT
 

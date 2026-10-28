@@ -138,10 +138,10 @@ fn serialize_uint128(s: MeasureStream&, value: Uint128) -> bool { return seriali
 // is exact (STANDARD.md, int128; DESIGN.md (c), (e)).
 fn serialize_int128(s: WriteStream&, value: Int128, min: Int128, max: Int128) -> bool {
     if serialize_int128_compare(min, max) > 0 { abort("serialize: min must not be greater than max"); }
-    guard s.error == SERIALIZE_ERROR_NONE else { return false; }
     if serialize_int128_compare(value, min) < 0 || serialize_int128_compare(value, max) > 0 {
-        return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+        abort("serialize: value must be in [min, max]");
     }
+    guard s.error == SERIALIZE_ERROR_NONE else { return false; }
     let umin = Uint128 { lo: min.lo, hi: min.hi };
     let umax = Uint128 { lo: max.lo, hi: max.hi };
     let uvalue = Uint128 { lo: value.lo, hi: value.hi };
@@ -153,7 +153,7 @@ fn serialize_int128(s: WriteStream&, value: Int128, min: Int128, max: Int128) ->
     return true;
 }
 fn serialize_int128(s: ReadStream&, value: Int128&, min: Int128, max: Int128) -> bool {
-    if serialize_int128_compare(min, max) > 0 { abort("serialize: min must not be greater than max"); }
+    guard serialize_int128_compare(min, max) <= 0 else { return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE); }
     let umin = Uint128 { lo: min.lo, hi: min.hi };
     let umax = Uint128 { lo: max.lo, hi: max.hi };
     let span = serialize_u128_sub(umax, umin);

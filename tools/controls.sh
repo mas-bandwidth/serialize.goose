@@ -69,6 +69,8 @@ int64-through-double	src/serialize_int.goose	value = ((min as! u64) + offset) as
 wrong-reason	src/serialize_bytes.goose	serialize_fail(s, SERIALIZE_ERROR_EMBEDDED_NUL)	serialize_fail(s, SERIALIZE_ERROR_INVALID_UTF8)
 object-terminal	src/serialize_object.goose	guard serialize_error(s) == SERIALIZE_ERROR_NONE else { return false; }	guard true else { return false; }
 object-terminal	src/serialize_object.goose	guard serialize(s, object) && serialize_error(s) == SERIALIZE_ERROR_NONE else {	guard serialize(s, object) else {
+object-latch-rejected	src/serialize_object.goose	return serialize_fail(s, SERIALIZE_ERROR_REJECTED);	return false; // NEGATIVE CONTROL: the object records no reason
+reject-reason	src/serialize_stream.goose	fn serialize_reject(s: ReadStream&) -> bool { return serialize_fail(s, SERIALIZE_ERROR_REJECTED); }	fn serialize_reject(s: ReadStream&) -> bool { return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE); }
 EOF_TABLE
 }
 

@@ -38,6 +38,12 @@ let K_END = 14;
 let K_FIXED = 15;
 let K_OBJECT = 16;
 let K_SEQUENCE = 17;
+// `reject`, a sequence step and no operation (sequence.txt; STANDARD.md 2.1,
+// rejected): the caller refusing a well formed value. At the top level the
+// runner refuses through serialize_reject; inside an object it is the
+// object's serialize returning false there, which serialize_object must
+// latch as rejected.
+let K_REJECT = 18;
 
 // The operations the corpus can name; any other is rejected, not skipped
 // (STANDARD.md, A gate nobody has seen go red).
@@ -313,6 +319,7 @@ fn conf_step_from_words(st: Step&, text: const u8[:]) -> bool {
         return st.width > 0 && st.width <= CONF_MAX_BYTES;
     }
     if conf_equals(w0, "end") && n == 1 { st.kind = K_END; return true; }
+    if conf_equals(w0, "reject") && n == 1 { st.kind = K_REJECT; return true; }
     if (conf_equals(w0, "int") || conf_equals(w0, "int64") || conf_equals(w0, "int128")) && n == 3 {
         st.kind = if conf_equals(w0, "int") { K_INT }
                   else if conf_equals(w0, "int64") { K_INT64 } else { K_INT128 };
@@ -456,6 +463,7 @@ fn conf_read_step(s: ReadStream&, st: Step&, check: bool, sabotage: i64) -> bool
         return !check || conf_same_bytes(st, st.input, st.input_len);
     }
     if st.kind == K_END { return serialize_end(s); }
+    if st.kind == K_REJECT { return serialize_reject(s); }
     if st.kind == K_FIXED {
         if st.storage == 32 {
             var v: i32 = st.got.lo as! i32;
@@ -518,6 +526,7 @@ fn conf_write_step(s: WriteStream&, st: Step&) -> bool {
     if st.kind == K_BYTES { return serialize_bytes(s, st.got_buf[0..st.got_len]); }
     if st.kind == K_STRING { return serialize_string(s, st.got_buf[0..st.got_len], st.width); }
     if st.kind == K_END { return serialize_end(s); }
+    if st.kind == K_REJECT { return false; }
     if st.kind == K_FIXED {
         if st.storage == 32 {
             return serialize_fixed32(s, st.got.lo as! i32, st.integer_bits, st.fraction_bits,
@@ -564,6 +573,7 @@ fn conf_measure_step(s: MeasureStream&, st: Step&) -> bool {
     if st.kind == K_BYTES { return serialize_bytes(s, st.got_buf[0..st.got_len]); }
     if st.kind == K_STRING { return serialize_string(s, st.got_buf[0..st.got_len], st.width); }
     if st.kind == K_END { return serialize_end(s); }
+    if st.kind == K_REJECT { return false; }
     if st.kind == K_FIXED {
         if st.storage == 32 {
             return serialize_fixed32(s, st.got.lo as! i32, st.integer_bits, st.fraction_bits,
@@ -602,10 +612,40 @@ struct ConfObject {
     check: bool,
     sabotage: i64,
     failed: i64,
+    depth: i64,
 }
 
 recursive fn serialize<S>(s: S&, o: ConfObject&) -> bool {
-    return conf_run_steps(s, o.steps, o.start, o.end, o.check, o.sabotage, o.failed);
+    return conf_run_steps(s, o.steps, o.start, o.end, o.check, o.sabotage, o.failed, o.depth + 1);
+}
+
+// The object.txt checks the C++ runner makes on every refused vector there
+// (conformance.cpp, run_reader): an empty object on the refused stream must
+// refuse without calling its serialize; a fresh stream whose object callback
+// returns false on its own must latch rejected, and stay terminal; and the
+// vector's own steps in an object that swallows their refusal (returns true)
+// must still refuse, keeping the inner reason.
+struct ConfEmpty { called: bool }
+fn serialize<S>(s: S&, o: ConfEmpty&) -> bool {
+    o.called = true;
+    return true;
+}
+
+struct ConfRefuses { called: bool }
+fn serialize<S>(s: S&, o: ConfRefuses&) -> bool {
+    o.called = true;
+    return false;
+}
+
+struct ConfSwallow {
+    steps: Step[64],
+    end: i64,
+    sabotage: i64,
+}
+recursive fn serialize<S>(s: S&, o: ConfSwallow&) -> bool {
+    var inner: i64 = -1;
+    conf_run_steps(s, o.steps, 0, o.end, false, o.sabotage, inner, 1);
+    return true;
 }
 
 // Object is composition and adds no bytes of its own: the nested steps run
@@ -613,12 +653,18 @@ recursive fn serialize<S>(s: S&, o: ConfObject&) -> bool {
 // serialize_object. Failure is terminal, and every later step of a refused
 // sequence must refuse too (STANDARD.md, Reader Obligations).
 recursive fn conf_run_steps<S>(s: S&, steps: Step[64]&, start: i64, end: i64,
-                               check: bool, sabotage: i64, failed: i64&) -> bool {
+                               check: bool, sabotage: i64, failed: i64&, depth: i64) -> bool {
     var i = start;
     while i < end {
+        if steps[i].kind == K_REJECT && depth > 0 {
+            // the object's serialize refuses on its own: it returns false and
+            // touches nothing
+            failed = i;
+            return false;
+        }
         if steps[i].kind == K_OBJECT {
             var object = ConfObject { steps: steps, start: i + 1, end: i + 1 + steps[i].width,
-                                      check: check, sabotage: sabotage, failed: failed };
+                                      check: check, sabotage: sabotage, failed: failed, depth: depth };
             let accepted = serialize_object(s, object);
             steps = object.steps;
             failed = object.failed;
@@ -671,6 +717,7 @@ struct Rec {
     wire_len: i64,
     steps: Step[64],
     step_count: i64,
+    object_file: bool,
 }
 
 fn conf_rec_reset(rec: Rec&) {
@@ -906,7 +953,7 @@ fn conf_parse_line(rec: Rec&, line: const u8[:]) {
 // The reason a refused record states, from the closed list (STANDARD.md,
 // Refusal reasons); NONE when it names none of them.
 fn conf_reason(name: const u8[:]) -> i32 {
-    for k in 8 {
+    for k in 9 {
         let kind = (k + 1) as! i32;
         if conf_equals(name, serialize_refusal_name(kind)) { return kind; }
     }
@@ -923,7 +970,7 @@ fn conf_new_rec() -> Rec {
         consumed: 0, measure_at_least: 0, has_expect: false,
         expect_text: [0; 1024], expect_len: 0, bad: false,
         wire: [0; 1024], wire_len: 0,
-        steps: [conf_empty_step(); 64], step_count: 0,
+        steps: [conf_empty_step(); 64], step_count: 0, object_file: false,
     };
 }
 
@@ -1004,6 +1051,61 @@ fn conf_check_writer_input(rec: Rec&, tally: Tally&) -> bool {
     return true;
 }
 
+// The object.txt checks (ConfEmpty above), on a refused vector's stream `r`
+// and on fresh streams over the same bytes. Prints the first one that fails.
+fn conf_object_checks(rec: Rec&, r: ReadStream&, sabotage: i64) -> bool {
+    let bits_before = serialize_bits_processed(r);
+    let reason_before = serialize_error(r);
+    var empty = ConfEmpty { called: false };
+    if serialize_object(r, empty) || empty.called {
+        print("    the object read after the refusal was accepted or invoked its serialize");
+        return false;
+    }
+    if serialize_bits_processed(r) != bits_before || serialize_error(r) != reason_before {
+        print("    the object read after the refusal moved the cursor or the reason");
+        return false;
+    }
+
+    var fresh: u8[2048] = [0xFF; 2048];
+    for i in rec.wire_len { fresh[i] = rec.wire[i]; }
+    var refused = serialize_read_stream_init(fresh, rec.wire_len);
+    var callback = ConfRefuses { called: false };
+    if serialize_object(refused, callback) || !callback.called {
+        print("    serialize_object accepted a callback returning false");
+        return false;
+    }
+    if serialize_error(refused) != SERIALIZE_ERROR_REJECTED {
+        print("    serialize_object callback-only refusal latched ", serialize_refusal_name(serialize_error(refused)), ", not rejected");
+        return false;
+    }
+    var probe: i32 = 12345;
+    if serialize_int(refused, probe, 7, 7) || probe != 12345 {
+        print("    a zero-bit read succeeded after the callback refusal");
+        return false;
+    }
+    var after = ConfEmpty { called: false };
+    if serialize_object(refused, after) || after.called {
+        print("    a nested object read succeeded or invoked its serialize after the callback refusal");
+        return false;
+    }
+    if !conf_is_terminal(refused) || serialize_error(refused) != SERIALIZE_ERROR_REJECTED {
+        print("    echo reads after the callback refusal read bits or overwrote rejected");
+        return false;
+    }
+
+    var whole = serialize_read_stream_init(fresh, rec.wire_len);
+    var swallow = ConfSwallow { steps: rec.steps, end: rec.step_count, sabotage: sabotage };
+    if serialize_object(whole, swallow) {
+        print("    serialize_object accepted a callback that returned true after an inner refusal");
+        return false;
+    }
+    if serialize_error(whole) != reason_before {
+        print("    serialize_object did not keep the inner refusal when the callback returned true");
+        return false;
+    }
+    return true;
+}
+
 // Runs one record. A malformed record aborts; a failing one is recorded in
 // the tally and the run goes on.
 fn conf_run_record(rec: Rec&, sabotage: i64, tally: Tally&) -> bool {
@@ -1042,7 +1144,7 @@ fn conf_run_record(rec: Rec&, sabotage: i64, tally: Tally&) -> bool {
     }
 
     var failed: i64 = -1;
-    let ok = conf_run_steps(r, rec.steps, 0, rec.step_count, !rec.refused, sabotage, failed);
+    let ok = conf_run_steps(r, rec.steps, 0, rec.step_count, !rec.refused, sabotage, failed, 0);
 
     if rec.refused {
         guard !ok else { return conf_fail(rec, tally, "accepted a stream the vector refuses"); }
@@ -1067,7 +1169,7 @@ fn conf_run_record(rec: Rec&, sabotage: i64, tally: Tally&) -> bool {
             while j < rec.step_count {
                 var inner: i64 = -1;
                 let width = if rec.steps[j].kind == K_OBJECT { 1 + rec.steps[j].width } else { 1 };
-                guard !conf_run_steps(r, rec.steps, j, j + width, false, sabotage, inner) else {
+                guard !conf_run_steps(r, rec.steps, j, j + width, false, sabotage, inner, 0) else {
                     return conf_fail(rec, tally, "a step after the refusal was accepted");
                 }
                 j += width;
@@ -1075,6 +1177,9 @@ fn conf_run_record(rec: Rec&, sabotage: i64, tally: Tally&) -> bool {
         }
         guard conf_is_terminal(r) else { return conf_fail(rec, tally, "the refused stream is not terminal"); }
         guard serialize_error(r) == rec.reason else { return conf_fail(rec, tally, "an echo replaced the first reason"); }
+        if rec.object_file {
+            guard conf_object_checks(rec, r, sabotage) else { return conf_fail(rec, tally, "an object check failed"); }
+        }
         return true;
     }
 
@@ -1091,7 +1196,7 @@ fn conf_run_record(rec: Rec&, sabotage: i64, tally: Tally&) -> bool {
         var wbuf: u8[2048] = [0xAA; 2048];
         var w = serialize_write_stream_init(wbuf);
         var inner: i64 = -1;
-        guard conf_run_steps(w, rec.steps, 0, rec.step_count, false, sabotage, inner) else {
+        guard conf_run_steps(w, rec.steps, 0, rec.step_count, false, sabotage, inner, 0) else {
             return conf_fail(rec, tally, "the writer refused the decoded value");
         }
         serialize_flush(w);
@@ -1105,7 +1210,7 @@ fn conf_run_record(rec: Rec&, sabotage: i64, tally: Tally&) -> bool {
     if rec.measure_at_least > 0 {
         var m = serialize_measure_stream_init();
         var inner: i64 = -1;
-        guard conf_run_steps(m, rec.steps, 0, rec.step_count, false, sabotage, inner) else {
+        guard conf_run_steps(m, rec.steps, 0, rec.step_count, false, sabotage, inner, 0) else {
             return conf_fail(rec, tally, "the measure refused");
         }
         guard serialize_bits_processed(m) >= rec.measure_at_least else { return conf_fail(rec, tally, "the measure is below its floor"); }
@@ -1119,6 +1224,8 @@ fn conf_run_file(filename: const u8[:], sabotage: i64, tally: Tally&) -> i64 {
     var content: u8[>..] = [];
     assert(read_file(filename, content));
     var rec = conf_new_rec();
+    // object.txt's refused vectors carry the C++ runner's object checks.
+    rec.object_file = conf_equals(filename, "object.txt");
     var count: i64 = 0;
     var ops: i64 = 0;
     var start: i64 = 0;
@@ -1275,7 +1382,7 @@ fn TestConformanceCorpus() {
 
     var tally = conf_new_tally();
     let total = conf_run_corpus(SAB_NONE, tally);
-    assert(total == 397);
+    assert(total == 413);
     assert(tally.failures == 0);
 
     // The sabotaged reader: the align rule switched off through an argument,

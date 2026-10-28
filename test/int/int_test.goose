@@ -423,40 +423,34 @@ fn int64_full_range_edges() {
     int64_round_trip(0xFFFFFFFF, 0, 0x1FFFFFFFF, 33);
 }
 
-fn int_write_latches() {
+// A ranged value outside [min,max] handed to a writer is write misuse: it
+// aborts, naming the rule (U9). One process per case, both sides of each
+// range, int, int64 and int128.
+fn int_write_outside(k: i64) {
     var buf: u8[16] = [0; 16];
     var w = serialize_write_stream_init(buf);
-    assert(!serialize_int(w, 9, 0, 8));
-    assert(serialize_error(w) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
-    assert(serialize_bits_processed(w) == 0);
-
-    var w2 = serialize_write_stream_init(buf);
-    assert(!serialize_int(w2, -6, -5, 5));
-    assert(serialize_error(w2) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
-    assert(serialize_bits_processed(w2) == 0);
-
-    var w3 = serialize_write_stream_init(buf);
-    assert(!serialize_int64(w3, 4294967297, 0, 4294967296));
-    assert(serialize_error(w3) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
-    assert(serialize_bits_processed(w3) == 0);
-
-    var w4 = serialize_write_stream_init(buf);
-    assert(!serialize_int64(w4, -1, 0, 4294967296));
-    assert(serialize_error(w4) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
-    assert(serialize_bits_processed(w4) == 0);
-
     let lo = serialize_int128_from_int64(-5);
     let hi = serialize_int128_from_int64(5);
-    var w5 = serialize_write_stream_init(buf);
-    assert(!serialize_int128(w5, serialize_int128_from_int64(6), lo, hi));
-    assert(serialize_error(w5) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
-    assert(serialize_bits_processed(w5) == 0);
-
-    var w6 = serialize_write_stream_init(buf);
-    assert(!serialize_int128(w6, serialize_int128_from_int64(-6), lo, hi));
-    assert(serialize_error(w6) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
-    assert(serialize_bits_processed(w6) == 0);
+    if k == 0 { serialize_int(w, 9, 0, 8); }
+    if k == 1 { serialize_int(w, -6, -5, 5); }
+    if k == 2 { serialize_int64(w, 4294967297, 0, 4294967296); }
+    if k == 3 { serialize_int64(w, -1, 0, 4294967296); }
+    if k == 4 { serialize_int128(w, serialize_int128_from_int64(6), lo, hi); }
+    if k == 5 { serialize_int128(w, serialize_int128_from_int64(-6), lo, hi); }
 }
+
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeIntWriteAboveMaxAborts() { int_write_outside(0); }
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeIntWriteBelowMinAborts() { int_write_outside(1); }
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeInt64WriteAboveMaxAborts() { int_write_outside(2); }
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeInt64WriteBelowMinAborts() { int_write_outside(3); }
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeInt128WriteAboveMaxAborts() { int_write_outside(4); }
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeInt128WriteBelowMinAborts() { int_write_outside(5); }
 
 fn int_relative_measure_matches_write() {
     let steps: i32[8] = [1, 2, 6, 7, 23, 280, 4377, 69914];
@@ -491,7 +485,6 @@ fn TestSerializeInt() {
 
     int_bits_required_edges();
     int64_full_range_edges();
-    int_write_latches();
     int_relative_measure_matches_write();
 }
 

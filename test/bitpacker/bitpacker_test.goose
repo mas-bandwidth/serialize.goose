@@ -288,7 +288,7 @@ fn test_read_latch_over_valid_data() {
     var r1 = serialize_read_stream_init(valid_data, 16);
     assert(serialize_bits_remaining(r1) == 128);
     assert(!serialize_fail(r1));
-    assert(serialize_error(r1) == SERIALIZE_ERROR_FAILED);
+    assert(serialize_error(r1) == SERIALIZE_ERROR_REJECTED);
     assert(serialize_bits_remaining(r1) == 128);
 
     var b1 = false;
@@ -305,7 +305,7 @@ fn test_read_latch_over_valid_data() {
     assert(!serialize_uint64(r1, u64_1) && u64_1 == 0x1122334455667788);
     assert(!serialize_align(r1));
     assert(serialize_bits_processed(r1) == 0);
-    assert(serialize_error(r1) == SERIALIZE_ERROR_FAILED);
+    assert(serialize_error(r1) == SERIALIZE_ERROR_REJECTED);
 
     // Case 2: data-triggered refusal (nonzero align padding in byte 0) when
     // 127 valid bits remain in the stream.
@@ -340,22 +340,15 @@ fn test_write_refusals_and_latch() {
     var buf: u8[8] = [0; 8];
     var w = serialize_write_stream_init(buf);
 
-    // Value >= 2^bits latches ValueOutOfRange and writes nothing.
-    assert(!serialize_bits(w, 8, 3));
+    // A value >= 2^bits is write misuse and aborts (U8, U9; TestU8*). A
+    // write stream latched by the caller's fail writes nothing after it.
+    assert(!serialize_fail(w, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE));
     assert(serialize_error(w) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
-    assert(serialize_bits_processed(w) == 0);
-    // Subsequent valid writes stay refused on the latched stream.
     assert(!serialize_bits(w, 1, 3));
     assert(!serialize_bool(w, true));
     assert(!serialize_uint8(w, 1));
     assert(!serialize_align(w));
     assert(serialize_bits_processed(w) == 0);
-
-    // bits64 value >= 2^bits latches ValueOutOfRange.
-    var w64 = serialize_write_stream_init(buf);
-    assert(!serialize_bits64(w64, (1 as u64) << 40, 40));
-    assert(serialize_error(w64) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
-    assert(serialize_bits_processed(w64) == 0);
 
     // Write overflow latches PAST_END and writes nothing for the overflowing call.
     var w_ovf = serialize_write_stream_init(buf);
@@ -667,17 +660,15 @@ fn TestBitpackerBits33Aborts() {
 // want-abort: serialize: bits must be in [1,64]
 fn TestBitpackerBits64ZeroAborts() {
     var buf: u8[16] = [0; 16];
-    var r = serialize_read_stream_init(buf, 8);
-    var v: u64 = 0;
-    serialize_bits64(r, v, 0);
+    var w = serialize_write_stream_init(buf);
+    serialize_bits64(w, 0, 0);
 }
 
 // want-abort: serialize: bits must be in [1,64]
 fn TestBitpackerBits64TooWideAborts() {
     var buf: u8[16] = [0; 16];
-    var r = serialize_read_stream_init(buf, 8);
-    var v: u64 = 0;
-    serialize_bits64(r, v, 65);
+    var w = serialize_write_stream_init(buf);
+    serialize_bits64(w, 0, 65);
 }
 
 // want-abort: serialize: write buffer bytes must be a multiple of 8
@@ -686,8 +677,10 @@ fn TestBitpackerWriteBufferMisalignedAborts() {
     serialize_write_stream_init(buf);
 }
 
-// want-abort: serialize: read data must extend at least 8 bytes past bytes
-fn TestBitpackerReadSlackMissingAborts() {
+// Read data without its 8 bytes of slack is caller misuse on a read: the
+// stream starts refused as value_out_of_range, never an abort (U7).
+fn TestBitpackerReadSlackMissingRefuses() {
     var buf: u8[8] = [0; 8];
-    serialize_read_stream_init(buf, 1);
+    var r = serialize_read_stream_init(buf, 1);
+    assert(serialize_error(r) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
 }

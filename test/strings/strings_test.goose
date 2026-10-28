@@ -75,7 +75,9 @@ fn wire_bits(wire: const u8[:], n: i64) -> u32 {
 // ---- records --------------------------------------------------------------
 
 // Step kinds in an object.txt record: 1 bits, 2 bool, 3 align, 4 bytes,
-// 5 object (the next n steps).
+// 5 object (the next n steps), 6 reject (the object's serialize returns false
+// there, refusing on its own; STANDARD.md 2.1, rejected). The whole record
+// runs inside one serialize_object, so every reject here is inside an object.
 struct SStep { kind: i64, n: i64, val: u64 }
 
 struct Seq { steps: SStep[16], start: i64, end: i64, check: bool }
@@ -156,6 +158,8 @@ recursive fn run_steps<S>(s: S&, seq: Seq&, start: i64, end: i64, check: bool) -
             child.check = check;
             guard serialize_object(s, child) else { return false; }
             i += 1 + st.n;
+        } else if st.kind == 6 {
+            return false;
         } else {
             abort("conformance: unknown object step");
         }
@@ -354,6 +358,7 @@ fn parse_param(rec: Rec&, s: const u8[:]) {
         else if str_starts(t, "bits ") { st.kind = 1; st.n = parse_dec(t[5..]) as! i64; }
         else if str_starts(t, "bytes ") { st.kind = 4; st.n = parse_dec(t[6..]) as! i64; }
         else if str_starts(t, "object ") { st.kind = 5; st.n = parse_dec(t[7..]) as! i64; }
+        else if str_equals(t, "reject") { st.kind = 6; }
         else { abort("conformance: unknown object step in object.txt"); }
         assert(rec.step_count < 16);
         rec.steps[rec.step_count] = st;
@@ -400,7 +405,7 @@ fn parse_line(rec: Rec&, line: const u8[:]) {
 // The reason a refused record states, from the closed list (STANDARD.md,
 // Refusal reasons); a missing or unknown reason is a malformed vector.
 fn reason_of(name: const u8[:]) -> i32 {
-    for k in 8 {
+    for k in 9 {
         let kind = (k + 1) as! i32;
         if str_equals(name, serialize_refusal_name(kind)) { return kind; }
     }
@@ -443,7 +448,7 @@ fn TestSerializeStrings() {
     assert(n_bytes == 12);
     assert(n_string == 53);
     assert(n_align == 10);
-    assert(n_object == 7);
+    assert(n_object == 12);
 }
 
 // Allocate-before-check (PORT-BRIEF, added 2026-10-22): a length field that
@@ -515,8 +520,8 @@ fn TestSerializeEnd() {
     assert(!serialize_end(e));
     assert(serialize_error(e) == SERIALIZE_ERROR_PAST_END);
 
-    // A latched write stream refuses its end too.
+    // End on a write is a no-op returning true, latched or not (U12).
     var wl = serialize_write_stream_init(buf);
     assert(!serialize_fail(wl, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE));
-    assert(!serialize_end(wl));
+    assert(serialize_end(wl));
 }
