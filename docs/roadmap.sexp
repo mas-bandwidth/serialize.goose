@@ -17,11 +17,12 @@
  :nodes
  ((:id "serialize-goose/roadmap" :type :work-set :children ("port"))
   (:id "port" :type :roadmap :title "The Goose port of serialize"
-   :text ("The Goose port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The families and the conformance runner are on main (PR #2, PR #3, 2026-10-22); format 2.0 landed with PR #5 (2026-10-22); the reference 2.1.0 standard, the rejected reason and the uniform rules U1-U16 landed with PR #10 (2026-10-27).")
+   :text ("The Goose port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The families and the conformance runner are on main (PR #2, PR #3, 2026-10-22); format 2.0 landed with PR #5 (2026-10-22); the reference 2.1.0 standard, the rejected reason and the uniform rules U1-U16 landed with PR #10 (2026-10-27); the 2.1.1 rulings (one write-misuse trap, measure checks, copy_string, exports) landed with PR #11 (2026-10-27).")
    :rows
    (("design" "Design, family stubs and test runner")
     ("standard" "STANDARD.md matches serialize v2.1.0")
     ("uniform" "The rejected reason and the uniform rules U1 to U16")
+    ("rulings" "The 2.1.1 rulings: one write-misuse trap (U9), measure checks (U6), copy_string and exports (U15)")
     ("format2" "Format 2.0: refusal reasons, finite floats, end, canonical int_relative, no wstring")
     ("ci" "Fleet CI workflow and its invariant test")
     ("bitpacker" "64-bit bitpacker and window reader")
@@ -39,6 +40,7 @@
    (("design" "goose" "port/design")
     ("standard" "goose" "port/standard")
     ("uniform" "goose" "port/uniform")
+    ("rulings" "goose" "port/rulings")
     ("format2" "goose" "port/format2")
     ("ci" "goose" "port/ci")
     ("bitpacker" "goose" "port/bitpacker")
@@ -59,6 +61,8 @@
   (:id "port/standard" :type :work-set :children ("serialize-goose-standard-matches-upstream" "serialize-goose-standard-2-0" "serialize-goose-standard-2-1"))
   (:id "serialize-goose-uniform-2-1" :type :task :title "The rejected reason and the uniform rules U1 to U16" :state :done :evidence ("PR #10 (branch rowan/2.1.0): test/uniform proves U2-U16, red before the fix; the audit ledger's H (limited-builder string trap), M (fixed Q bounds) and L (precomputed measure) fixed with reproducer tests; object-latch-rejected and reject-reason controls exact"))
   (:id "port/uniform" :type :work-set :children ("serialize-goose-uniform-2-1"))
+  (:id "serialize-goose-rulings-2-1-1" :type :task :title "The 2.1.1 rulings: one write-misuse trap (U9), measure checks (U6), copy_string and exports (U15)" :state :done :evidence ("PR #11 (branch rowan/2.1.1-rulings): test/uniform/rulings_test.goose, 25 tests, 24 red on main before the fix; a write past the end aborts naming the whole width, fail/reject/object on a write record nothing or abort, a measure makes every write value check, copy_string backs off to a whole character; witnesses 58 of 58"))
+  (:id "port/rulings" :type :work-set :children ("serialize-goose-rulings-2-1-1"))
   (:id "serialize-goose-format-2-0" :type :task :title "Format 2.0: refusal reasons, finite floats, end, canonical int_relative, no wstring" :state :done :evidence ("PR #5 on main (branch rowan/format-2.0): TestConformanceCorpus runs 18 files, 397 of 397 records, every refusal for its stated reason"))
   (:id "port/format2" :type :work-set :children ("serialize-goose-format-2-0"))
   (:id "serialize-goose-ci" :type :task :title "Fleet CI workflow and its invariant test" :state :done :evidence ("land commit aca98ffcff41 on sprint/serialize-goose (card serialize-goose-ci, stream serialize-goose)"))

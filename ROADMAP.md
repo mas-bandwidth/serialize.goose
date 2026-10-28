@@ -4,7 +4,7 @@
 
 ## The Goose port of serialize
 
-The Goose port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The families and the conformance runner are on main (PR #2, PR #3, 2026-10-22); format 2.0 landed with PR #5 (2026-10-22); the reference 2.1.0 standard, the rejected reason and the uniform rules U1-U16 landed with PR #10 (2026-10-27).
+The Goose port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The families and the conformance runner are on main (PR #2, PR #3, 2026-10-22); format 2.0 landed with PR #5 (2026-10-22); the reference 2.1.0 standard, the rejected reason and the uniform rules U1-U16 landed with PR #10 (2026-10-27); the 2.1.1 rulings (one write-misuse trap, measure checks, copy_string, exports) landed with PR #11 (2026-10-27).
 
 <!-- nova-work:port:start -->
 
@@ -13,6 +13,7 @@ The Goose port of serialize, the open-source bitpacking serializer: the same wir
 | Design, family stubs and test runner | ✅ |
 | STANDARD.md matches serialize v2.1.0 | ✅ |
 | The rejected reason and the uniform rules U1 to U16 | ✅ |
+| The 2.1.1 rulings: one write-misuse trap (U9), measure checks (U6), copy_string and exports (U15) | ✅ |
 | Format 2.0: refusal reasons, finite floats, end, canonical int_relative, no wstring | ✅ |
 | Fleet CI workflow and its invariant test | ✅ |
 | 64-bit bitpacker and window reader | ✅ |
@@ -25,7 +26,7 @@ The Goose port of serialize, the open-source bitpacking serializer: the same wir
 | Differential fuzzing against serialize.c | ✅ |
 | Benchmark against serialize.c, C++ serialize and serialize.rs | ❌ |
 | Goose vs C++ vs Rust (and Lobster) benchmark report | ❌ |
-| complete | 86% |
+| complete | 87% |
 
 [Source data](docs/roadmap.sexp)
 
