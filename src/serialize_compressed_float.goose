@@ -87,17 +87,24 @@ fn serialize_compressed_float(s: ReadStream&, value: f32&, min: f32, max: f32, r
 }
 fn serialize_compressed_float(s: MeasureStream&, value: f32, min: f32, max: f32, res: f32) -> bool {
     let max_integer_value, bits, delta = serialize_compressed_float_params(min, max, res);
-    return serialize_measure_add(s, bits);
+    return serialize_compressed_float_precomputed(s, value, max_integer_value, bits, delta, min);
+}
+
+// A write's or a measure's checks, in order: the constants, the value, and
+// the declaration's top decode, min + delta rounded once, which must be
+// finite (STANDARD.md, compressed_float): checked on the write side only, a
+// reader refuses its non-finite decode at runtime. A non-finite value aborts
+// and is never clamped (U9).
+fn cf_check_write(value: f32, max_integer_value: u32, bits: i64, delta: f32, min: f32) {
+    cf_check_precomputed(max_integer_value, bits, delta);
+    if !cf_finite(value) { abort("serialize: compressed float value must be finite"); }
+    let top: f32 = min + delta;
+    if !cf_finite(top) { abort("serialize: compressed float declaration must decode its top to a finite value"); }
 }
 
 // The same wire from the precomputed constants (mas-bandwidth/schema#82).
 fn serialize_compressed_float_precomputed(s: WriteStream&, value: f32, max_integer_value: u32, bits: i64, delta: f32, min: f32) -> bool {
-    cf_check_precomputed(max_integer_value, bits, delta);
-    if !cf_finite(value) { abort("serialize: compressed float value must be finite"); }
-    // The declaration's top decode, min + delta rounded once, must be finite
-    // (STANDARD.md, compressed_float): checked on the write path only.
-    let top: f32 = min + delta;
-    if !cf_finite(top) { abort("serialize: compressed float declaration must decode its top to a finite value"); }
+    cf_check_write(value, max_integer_value, bits, delta, min);
 
     var normalized: f32 = (value - min) / delta;
     if !(normalized >= 0.0) {
@@ -136,9 +143,10 @@ fn serialize_compressed_float_precomputed(s: ReadStream&, value: f32&, max_integ
     return true;
 }
 
-// The measure checks the declaration exactly as the writer does, so a
-// mismatched one never measures short (audit ledger L, 2026-10-27).
+// The measure makes every check the writer makes (U6), so a mismatched
+// declaration never measures short (audit ledger L, 2026-10-27) and a
+// non-finite value aborts there too.
 fn serialize_compressed_float_precomputed(s: MeasureStream&, value: f32, max_integer_value: u32, bits: i64, delta: f32, min: f32) -> bool {
-    cf_check_precomputed(max_integer_value, bits, delta);
+    cf_check_write(value, max_integer_value, bits, delta, min);
     return serialize_measure_add(s, bits);
 }

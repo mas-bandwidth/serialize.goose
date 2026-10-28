@@ -433,8 +433,8 @@ fn ff_float_refused(bits: u32) {
     assert(!serialize_float(r, got));
     assert(serialize_f32_bits(got) == 0x40000000);
     assert(serialize_error(r) == SERIALIZE_ERROR_NON_FINITE_FLOAT);
-    var m = serialize_measure_stream_init();
-    assert(serialize_float(m, serialize_f32_from_bits(bits)));
+    // A measure handed one aborts as a write does (U6, U9;
+    // TestU6MeasureFloatNaNAborts).
 }
 
 fn ff_double_refused(bits: u64) {

@@ -340,23 +340,23 @@ fn test_write_refusals_and_latch() {
     var buf: u8[8] = [0; 8];
     var w = serialize_write_stream_init(buf);
 
-    // A value >= 2^bits is write misuse and aborts (U8, U9; TestU8*). A
-    // write stream latched by the caller's fail writes nothing after it.
+    // A value >= 2^bits is write misuse and aborts (U8, U9; TestU8*). The
+    // caller's fail on a write returns false and records nothing (U9): the
+    // stream writes on as if it had not been called.
     assert(!serialize_fail(w, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE));
-    assert(serialize_error(w) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
-    assert(!serialize_bits(w, 1, 3));
-    assert(!serialize_bool(w, true));
-    assert(!serialize_uint8(w, 1));
-    assert(!serialize_align(w));
-    assert(serialize_bits_processed(w) == 0);
+    assert(serialize_error(w) == SERIALIZE_ERROR_NONE);
+    assert(serialize_bits(w, 1, 3));
+    assert(serialize_bool(w, true));
+    assert(serialize_uint8(w, 1));
+    assert(serialize_align(w));
+    assert(serialize_bits_processed(w) == 16);
 
-    // Write overflow latches PAST_END and writes nothing for the overflowing call.
-    var w_ovf = serialize_write_stream_init(buf);
-    assert(serialize_uint64(w_ovf, 0xFFEEDDCCBBAA9988));
-    assert(serialize_bits_available(w_ovf) == 0);
-    assert(!serialize_bool(w_ovf, true));
-    assert(serialize_error(w_ovf) == SERIALIZE_ERROR_PAST_END);
-    assert(serialize_bits_processed(w_ovf) == 64);
+    // Filling the buffer exactly is fine; one more bit is write misuse and
+    // aborts (U9; TestU9WritePastEndAborts).
+    var w_full = serialize_write_stream_init(buf);
+    assert(serialize_uint64(w_full, 0xFFEEDDCCBBAA9988));
+    assert(serialize_bits_available(w_full) == 0);
+    assert(serialize_error(w_full) == SERIALIZE_ERROR_NONE);
 }
 
 // ---- Conformance vector parser for bits.txt, bool.txt, align.txt -----------

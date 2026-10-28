@@ -16,11 +16,13 @@ import .serialize_stream;
 // On a latched stream it refuses before calling, so an empty object (which
 // reads nothing) refuses too. On exit it refuses when the caller's function
 // returned false OR left the stream latched (a refusal it swallowed), as the
-// C++ macro does from serialize 2.0.1 (commit 3f40cb5f). A callback that
-// returns false with nothing latched is the caller's own refusal, latched as
-// REJECTED (U2; STANDARD.md 2.1, rejected); a reason already latched inside
-// it is kept, through the same first-wins latch (DESIGN.md (a), The latched
-// kinds; STANDARD.md, Failure is terminal).
+// C++ macro does from serialize 2.0.1 (commit 3f40cb5f). On a read, a
+// callback that returns false with nothing latched is the caller's own
+// refusal, latched as REJECTED (U2; STANDARD.md 2.1, rejected); a reason
+// already latched inside it is kept, through the same first-wins latch
+// (DESIGN.md (a), The latched kinds; STANDARD.md, Failure is terminal). On a
+// write or a measure nothing latches: the object returns false and records
+// nothing, since serialize_fail there records nothing (U6, U9).
 recursive fn serialize_object<S, T>(s: S&, object: T&) -> bool {
     guard serialize_error(s) == SERIALIZE_ERROR_NONE else { return false; }
     guard serialize(s, object) && serialize_error(s) == SERIALIZE_ERROR_NONE else {

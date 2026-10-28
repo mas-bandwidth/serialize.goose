@@ -30,7 +30,7 @@ fn serialize_write_length(s: WriteStream&, value: i64, buffer_size: i64) -> bool
     if buffer_size < 1 { abort("serialize: min must not be greater than max"); }
     if value < 0 || value > buffer_size - 1 { abort("serialize: string length must fit buffer_size"); }
     let bits = serialize_length_bits(buffer_size - 1);
-    guard serialize_write_check(s, bits) else { return false; }
+    serialize_write_check(s, bits);
     if bits > 0 {
         serialize_packer_write(s, value as u64, bits);
     }
@@ -99,9 +99,9 @@ fn serialize_valid_utf8(data: const u8[:]) -> bool {
 
 // Aligns FIRST, then the count raw bytes, which are not transmitted. The
 // writer checks room for the align and the payload together before writing
-// either (U10).
+// either, and aborts when they do not fit (U9, U10).
 fn serialize_bytes(s: WriteStream&, data: const u8[:]) -> bool {
-    guard serialize_write_check(s, serialize_align_bits(s) + data.len * 8) else { return false; }
+    serialize_write_check(s, serialize_align_bits(s) + data.len * 8);
     serialize_align(s);
     serialize_packer_write_bytes(s, data);
     return true;
@@ -124,9 +124,9 @@ fn serialize_bytes(s: MeasureStream&, data: const u8[:]) -> bool {
 
 // int(length, 0, buffer_size - 1), then the bytes, which align. The writer
 // and the measure are handed well-formed UTF-8 with no zero byte that fits
-// buffer_size - 1 (abort otherwise; U3, U4). The writer checks room for the
-// whole operation, length, align and payload, before writing any of it
-// (U10). The reader checks the declaration against the destination, then the
+// buffer_size - 1 (abort otherwise; U3, U4, U9). The writer checks room for
+// the whole operation, length, align and payload, before writing any of it,
+// and aborts when it does not fit (U9, U10). The reader checks the declaration against the destination, then the
 // claimed length against the stream, BEFORE it touches the destination, then
 // scans the whole payload for a zero byte (EMBEDDED_NUL) before it validates
 // the encoding (INVALID_UTF8), so a payload that breaks both rules is
@@ -144,7 +144,7 @@ fn serialize_string(s: WriteStream&, value: const u8[:], buffer_size: i64) -> bo
     serialize_string_check(value, buffer_size);
     let length_bits = serialize_length_bits(buffer_size - 1);
     let align = (8 - (s.bits_written + length_bits) % 8) % 8;
-    guard serialize_write_check(s, length_bits + align + value.len * 8) else { return false; }
+    serialize_write_check(s, length_bits + align + value.len * 8);
     serialize_write_length(s, value.len, buffer_size);
     return serialize_bytes(s, value);
 }
@@ -197,15 +197,26 @@ fn serialize_string(s: MeasureStream&, value: const u8[:], buffer_size: i64) -> 
 
 // ---- copy_string (the reference helper; U15) -------------------------------
 
-// serialize_copy_string: zeroes the destination, then copies at most
-// dest.len - 1 bytes of source, stopping at a zero byte, so the destination
-// always ends in a zero byte. A destination of no bytes is caller misuse.
+// serialize_copy_string (IMPLEMENTING.md U15, 2.1.1): zeroes the
+// destination, then copies the source's bytes before its first zero byte;
+// if there are more than dest.len - 1 of them it keeps the first
+// dest.len - 1, then drops bytes from the end while the first byte left out
+// is a continuation byte (10xxxxxx), so a cut never ends inside a UTF-8
+// sequence and serialize_string with buffer_size = dest.len accepts the
+// result. The destination always ends in a zero byte. A destination of no
+// bytes is write misuse and aborts (U9).
 fn serialize_copy_string(dest: u8[:], source: const u8[:]) {
     if dest.len < 1 { abort("serialize: copy_string destination must hold at least one byte"); }
     for i in dest.len { dest[i] = 0; }
-    var i: i64 = 0;
-    while i < dest.len - 1 && i < source.len && source[i] != 0 {
-        dest[i] = source[i];
-        i += 1;
+    var length: i64 = 0;
+    while length < dest.len - 1 && length < source.len && source[length] != 0 {
+        length += 1;
     }
+    // The cut fell inside a sequence exactly when the first byte left out is
+    // a continuation byte. A zero byte or the source's end is never one, so
+    // an uncut copy never backs off.
+    while length > 0 && length < source.len && (source[length] & 0xC0) == 0x80 {
+        length -= 1;
+    }
+    for i in length { dest[i] = source[i]; }
 }

@@ -119,7 +119,7 @@ fn serialize_u128_read_bits(s: ReadStream&, value: Uint128&, bits: i64) {
 // uint128: always 128 bits, the low half first, each half as bits(half, 64)
 // (STANDARD.md, uint128).
 fn serialize_uint128(s: WriteStream&, value: Uint128) -> bool {
-    guard serialize_write_check(s, 128) else { return false; }
+    serialize_write_check(s, 128);
     serialize_packer_write(s, value.lo, 64);
     serialize_packer_write(s, value.hi, 64);
     return true;
@@ -141,14 +141,13 @@ fn serialize_int128(s: WriteStream&, value: Int128, min: Int128, max: Int128) ->
     if serialize_int128_compare(value, min) < 0 || serialize_int128_compare(value, max) > 0 {
         abort("serialize: value must be in [min, max]");
     }
-    guard s.error == SERIALIZE_ERROR_NONE else { return false; }
     let umin = Uint128 { lo: min.lo, hi: min.hi };
     let umax = Uint128 { lo: max.lo, hi: max.hi };
     let uvalue = Uint128 { lo: value.lo, hi: value.hi };
     let bits = serialize_bits_required128(umin, umax);
     if bits == 0 { return true; }
     let offset = serialize_u128_sub(uvalue, umin);
-    guard serialize_write_check(s, bits) else { return false; }
+    serialize_write_check(s, bits);
     serialize_u128_write_bits(s, offset, bits);
     return true;
 }
@@ -175,6 +174,9 @@ fn serialize_int128(s: ReadStream&, value: Int128&, min: Int128, max: Int128) ->
 }
 fn serialize_int128(s: MeasureStream&, value: Int128, min: Int128, max: Int128) -> bool {
     if serialize_int128_compare(min, max) > 0 { abort("serialize: min must not be greater than max"); }
+    if serialize_int128_compare(value, min) < 0 || serialize_int128_compare(value, max) > 0 {
+        abort("serialize: value must be in [min, max]");
+    }
     let umin = Uint128 { lo: min.lo, hi: min.hi };
     let umax = Uint128 { lo: max.lo, hi: max.hi };
     return serialize_measure_add(s, serialize_bits_required128(umin, umax));

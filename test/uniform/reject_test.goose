@@ -95,24 +95,9 @@ fn TestU2ObjectThatDoesNotRejectIsAccepted() {
     assert(serialize_error(r) == SERIALIZE_ERROR_NONE);
 }
 
-// Reject is read only. On a write it is caller misuse, reported through the
-// write stream's error flag (U9: reject on a write or measure returns false
-// and never aborts); on a measure it records nothing (U6).
-fn TestU2RejectOnWriteAndMeasureReturnsFalse() {
-    var buf: u8[8] = [0; 8];
-    var w = serialize_write_stream_init(buf);
-    assert(!serialize_reject(w));
-    assert(serialize_error(w) == SERIALIZE_ERROR_REJECTED);
-    var m = serialize_measure_stream_init();
-    assert(!serialize_reject(m));
-    assert(serialize_error(m) == SERIALIZE_ERROR_NONE);
-    assert(serialize_bits(m, 0, 3));
-}
-
-// The 2.0 spelling of the caller's refusal is the same reason.
-fn TestU2FailedIsTheOldSpellingOfRejected() {
-    assert(SERIALIZE_ERROR_FAILED == SERIALIZE_ERROR_REJECTED);
-}
+// Reject is read only: on a write or a measure it is caller misuse and
+// aborts (U9; TestU9RejectOnWriteAborts, TestU9RejectOnMeasureAborts in
+// rulings_test.goose).
 
 // U15: serialize_copy_string, the reference helper: zero the destination,
 // then copy at most dest.len - 1 bytes, stopping at a zero byte.

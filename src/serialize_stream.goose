@@ -4,9 +4,11 @@
 // is the latch, the gate and one call into the packer
 // (src/serialize_bitpacker.goose), where every bit actually moves.
 
+import std;
 import .serialize_bitpacker;
 
-// The latched kinds (DESIGN.md (a), errors). The first one latched sticks:
+// The latched kinds (DESIGN.md (a), errors), a READ stream's only: write
+// and measure misuse never latches (U9). The first one latched sticks:
 // the later refusals of a failed stream are echoes and keep it. Kinds 1 to 9
 // are the refusal reasons, the closed list STANDARD.md defines under "Refusal
 // reasons", in the C++ library's serialize::Refusal order; serialize_refusal_name
@@ -17,7 +19,7 @@ import .serialize_bitpacker;
 // reason is recorded, the reason never changes once recorded, no read
 // succeeds after a refusal.
 let SERIALIZE_ERROR_NONE = 0;
-let SERIALIZE_ERROR_PAST_END = 1;           // past_end: past the end of the data or the buffer
+let SERIALIZE_ERROR_PAST_END = 1;           // past_end: past the end of the data
 let SERIALIZE_ERROR_VALUE_OUT_OF_RANGE = 2; // value_out_of_range: outside a range or domain
 let SERIALIZE_ERROR_NONZERO_PADDING = 3;    // nonzero_padding: align padding, or the end's final byte
 let SERIALIZE_ERROR_TRAILING_DATA = 4;      // trailing_data: a whole byte or more after the end
@@ -26,8 +28,6 @@ let SERIALIZE_ERROR_INVALID_UTF8 = 6;       // invalid_utf8: a string payload th
 let SERIALIZE_ERROR_EMBEDDED_NUL = 7;       // embedded_nul: a zero byte in a string payload
 let SERIALIZE_ERROR_NON_CANONICAL = 8;      // non_canonical: an encoding no writer produces
 let SERIALIZE_ERROR_REJECTED = 9;           // rejected: well formed bytes, the caller refused the value
-// The 2.0 spelling of REJECTED, kept so 2.0 callers compile unchanged.
-let SERIALIZE_ERROR_FAILED = SERIALIZE_ERROR_REJECTED;
 
 // The family-wide name of a latched kind, exactly as STANDARD.md and the
 // corpus spell it ("past_end", "rejected"); "none" for NONE (U14). Anything
@@ -48,6 +48,7 @@ fn serialize_refusal_name(kind: i32) -> const u8[:] {
 
 // A write stream over the caller's buffer, whose length is a multiple of 8:
 // the packer commits whole 64-bit words (STANDARD.md, General Conventions).
+// It has no refusal state: write misuse aborts and records nothing (U9).
 struct WriteStream {
     data: u8[:],
     num_bits: i64,
@@ -55,7 +56,6 @@ struct WriteStream {
     word_index: i64,
     scratch: u64,
     scratch_bits: i64,
-    error: i32,
 }
 
 // A read stream over `bytes` bytes of data that extends at least 8 bytes
@@ -69,9 +69,9 @@ struct ReadStream {
 }
 
 // A measure stream: a conservative bound (STANDARD.md, The Measure Stream).
+// It refuses nothing and has no refusal state (U6).
 struct MeasureStream {
     bits_written: i64,
-    error: i32,
 }
 
 // ---- lifecycle -------------------------------------------------------------
@@ -80,7 +80,7 @@ struct MeasureStream {
 fn serialize_write_stream_init(buffer: u8[:]) -> WriteStream {
     if buffer.len % 8 != 0 { abort("serialize: write buffer bytes must be a multiple of 8"); }
     return WriteStream { data: buffer, num_bits: buffer.len * 8, bits_written: 0, word_index: 0,
-                         scratch: 0, scratch_bits: 0, error: SERIALIZE_ERROR_NONE };
+                         scratch: 0, scratch_bits: 0 };
 }
 
 // data holds the `bytes` bytes to read plus at least 8 bytes of slack. A
@@ -107,7 +107,7 @@ fn serialize_read_stream_init_padded(destination: u8[:], data: const u8[:]) -> R
 }
 
 fn serialize_measure_stream_init() -> MeasureStream {
-    return MeasureStream { bits_written: 0, error: SERIALIZE_ERROR_NONE };
+    return MeasureStream { bits_written: 0 };
 }
 
 // Writes out the partial scratch word (STANDARD.md, General Conventions, Flush).
@@ -116,9 +116,12 @@ fn serialize_flush(s: WriteStream&) { serialize_packer_flush(s); }
 
 // ---- the latch -------------------------------------------------------------
 
-fn serialize_error(s: WriteStream&) -> i32 { return s.error; }
+// A read stream's latched reason. A write or a measure records nothing
+// (U6, U9), so on one it is always NONE: it exists so a function generic over
+// the stream (serialize_object) can ask.
+fn serialize_error(s: WriteStream&) -> i32 { return SERIALIZE_ERROR_NONE; }
 fn serialize_error(s: ReadStream&) -> i32 { return s.error; }
-fn serialize_error(s: MeasureStream&) -> i32 { return s.error; }
+fn serialize_error(s: MeasureStream&) -> i32 { return SERIALIZE_ERROR_NONE; }
 
 // The reason a fail records: a kind on the closed list as given, and REJECTED
 // for NONE or anything outside it, so a refused stream never reports none
@@ -129,15 +132,11 @@ fn serialize_fail_kind(kind: i32) -> i32 {
     return kind;
 }
 
-// Latches kind unless an error is already latched (the first sticks) and
-// returns false, so a caller can `return serialize_fail(s)`. It never aborts,
-// on any stream (U9, U14). On a write it sets the write stream's error flag
-// (the C write error flag, U15); a measure refuses nothing and records
-// nothing (U6).
-fn serialize_fail(s: WriteStream&, kind: i32 = SERIALIZE_ERROR_REJECTED) -> bool {
-    if s.error == SERIALIZE_ERROR_NONE { s.error = serialize_fail_kind(kind); }
-    return false;
-}
+// On a read, latches kind unless an error is already latched (the first
+// sticks) and returns false, so a caller can `return serialize_fail(s)`. On a
+// write or a measure it returns false and records nothing: no reason, no
+// later failure (U6, U9). It never aborts, on any stream (U9, U14).
+fn serialize_fail(s: WriteStream&, kind: i32 = SERIALIZE_ERROR_REJECTED) -> bool { return false; }
 fn serialize_fail(s: ReadStream&, kind: i32 = SERIALIZE_ERROR_REJECTED) -> bool {
     if s.error == SERIALIZE_ERROR_NONE { s.error = serialize_fail_kind(kind); }
     return false;
@@ -148,12 +147,11 @@ fn serialize_fail(s: MeasureStream&, kind: i32 = SERIALIZE_ERROR_REJECTED) -> bo
 // formed, and the caller refuses the value they carry. On a read it latches
 // REJECTED through the same latch as a wire refusal, so the first reason
 // wins with no special case, and returns false, so a caller can
-// `return serialize_reject(s)`. Reject is read only: on a write it is caller
-// misuse, reported through the write stream's error flag, and on a measure
-// it records nothing; both return false and never abort (U9).
-fn serialize_reject(s: WriteStream&) -> bool { return serialize_fail(s, SERIALIZE_ERROR_REJECTED); }
+// `return serialize_reject(s)`. Reject is read only: on a write or a measure
+// it is caller misuse and aborts, as all write misuse does (U9).
+fn serialize_reject(s: WriteStream&) -> bool { abort("serialize: reject is read only"); }
 fn serialize_reject(s: ReadStream&) -> bool { return serialize_fail(s, SERIALIZE_ERROR_REJECTED); }
-fn serialize_reject(s: MeasureStream&) -> bool { return false; }
+fn serialize_reject(s: MeasureStream&) -> bool { abort("serialize: reject is read only"); }
 
 fn serialize_is_writing(s: WriteStream&) -> bool { return true; }
 fn serialize_is_writing(s: ReadStream&) -> bool { return false; }
@@ -173,12 +171,18 @@ fn serialize_read_check(s: ReadStream&, bits: i64) -> bool {
     return true;
 }
 
-// A latched write stream writes nothing; a write past the end of the buffer
-// latches PAST_END and writes nothing (DESIGN.md (e)).
-fn serialize_write_check(s: WriteStream&, bits: i64) -> bool {
-    guard s.error == SERIALIZE_ERROR_NONE else { return false; }
-    guard bits <= s.num_bits - s.bits_written else { return serialize_fail(s, SERIALIZE_ERROR_PAST_END); }
-    return true;
+// A write that does not fit the room left is write misuse: it aborts before
+// any bit of the operation is written, naming the operation's whole width
+// (U9, U10; DESIGN.md (e)). Never a latched past_end: that is a reader's.
+fn serialize_write_check(s: WriteStream&, bits: i64) {
+    if bits > s.num_bits - s.bits_written { serialize_write_past_end(s, bits); }
+}
+
+// The abort, out of line so the check above stays one compare.
+fn serialize_write_past_end(s: WriteStream&, bits: i64) {
+    var message: u8[>..] = [];
+    format(message, "serialize: write does not fit the buffer: ", bits, " bits, ", s.num_bits - s.bits_written, " left");
+    abort(message);
 }
 
 // A measure refuses nothing (STANDARD.md, The Measure Stream; U6): it
@@ -205,10 +209,9 @@ fn serialize_align_bits(s: ReadStream&) -> i64 { return (8 - s.bits_read % 8) % 
 
 // ---- bit-level primitives (STANDARD.md, Bit-Level Primitives) -------------
 
-// bits: [1,32], value < 2^bits (STANDARD.md, bits). On a write a bits count
-// outside the range, or a value too wide for it, aborts (write misuse, before
-// the latch is consulted; U8, U9); a measure checks the count and, as the C++
-// measure does, ignores the value. On a read the count is the caller's
+// bits: [1,32], value < 2^bits (STANDARD.md, bits). On a write or a measure
+// a bits count outside the range, or a value too wide for it, aborts (write
+// misuse; U6, U8, U9). On a read the count is the caller's
 // declaration, refused as VALUE_OUT_OF_RANGE before any bit moves (U16). The
 // shift is guarded: Goose masks shift counts, so `value >> 32` on a u32 would
 // be `value` (DESIGN.md (c)).
@@ -225,7 +228,7 @@ fn serialize_bits_write_check(value: u64, bits: i64, width: i64) {
 
 fn serialize_bits(s: WriteStream&, value: u32, bits: i64) -> bool {
     serialize_bits_write_check(value, bits, 32);
-    guard serialize_write_check(s, bits) else { return false; }
+    serialize_write_check(s, bits);
     serialize_packer_write(s, value, bits);
     return true;
 }
@@ -236,7 +239,7 @@ fn serialize_bits(s: ReadStream&, value: u32&, bits: i64) -> bool {
     return true;
 }
 fn serialize_bits(s: MeasureStream&, value: u32, bits: i64) -> bool {
-    serialize_bits_count_check(bits, 32);
+    serialize_bits_write_check(value, bits, 32);
     return serialize_measure_add(s, bits);
 }
 
@@ -244,7 +247,7 @@ fn serialize_bits(s: MeasureStream&, value: u32, bits: i64) -> bool {
 // of the whole value produces by construction (STANDARD.md, bits).
 fn serialize_bits64(s: WriteStream&, value: u64, bits: i64) -> bool {
     serialize_bits_write_check(value, bits, 64);
-    guard serialize_write_check(s, bits) else { return false; }
+    serialize_write_check(s, bits);
     serialize_packer_write(s, value, bits);
     return true;
 }
@@ -255,13 +258,13 @@ fn serialize_bits64(s: ReadStream&, value: u64&, bits: i64) -> bool {
     return true;
 }
 fn serialize_bits64(s: MeasureStream&, value: u64, bits: i64) -> bool {
-    serialize_bits_count_check(bits, 64);
+    serialize_bits_write_check(value, bits, 64);
     return serialize_measure_add(s, bits);
 }
 
 // bool: one bit, 1 for true (STANDARD.md, bool).
 fn serialize_bool(s: WriteStream&, value: bool) -> bool {
-    guard serialize_write_check(s, 1) else { return false; }
+    serialize_write_check(s, 1);
     serialize_packer_write(s, if value { 1 } else { 0 }, 1);
     return true;
 }
@@ -275,7 +278,7 @@ fn serialize_bool(s: MeasureStream&, value: bool) -> bool { return serialize_mea
 // uint8..uint64: exactly bits(value, width) (STANDARD.md, bits, the
 // fixed-width helpers table); uint64 is the low 32 then the high 32.
 fn serialize_uint8(s: WriteStream&, value: u8) -> bool {
-    guard serialize_write_check(s, 8) else { return false; }
+    serialize_write_check(s, 8);
     serialize_packer_write(s, value, 8);
     return true;
 }
@@ -287,7 +290,7 @@ fn serialize_uint8(s: ReadStream&, value: u8&) -> bool {
 fn serialize_uint8(s: MeasureStream&, value: u8) -> bool { return serialize_measure_add(s, 8); }
 
 fn serialize_uint16(s: WriteStream&, value: u16) -> bool {
-    guard serialize_write_check(s, 16) else { return false; }
+    serialize_write_check(s, 16);
     serialize_packer_write(s, value, 16);
     return true;
 }
@@ -299,7 +302,7 @@ fn serialize_uint16(s: ReadStream&, value: u16&) -> bool {
 fn serialize_uint16(s: MeasureStream&, value: u16) -> bool { return serialize_measure_add(s, 16); }
 
 fn serialize_uint32(s: WriteStream&, value: u32) -> bool {
-    guard serialize_write_check(s, 32) else { return false; }
+    serialize_write_check(s, 32);
     serialize_packer_write(s, value, 32);
     return true;
 }
@@ -311,7 +314,7 @@ fn serialize_uint32(s: ReadStream&, value: u32&) -> bool {
 fn serialize_uint32(s: MeasureStream&, value: u32) -> bool { return serialize_measure_add(s, 32); }
 
 fn serialize_uint64(s: WriteStream&, value: u64) -> bool {
-    guard serialize_write_check(s, 64) else { return false; }
+    serialize_write_check(s, 64);
     serialize_packer_write(s, value, 64);
     return true;
 }
@@ -327,10 +330,9 @@ fn serialize_uint64(s: MeasureStream&, value: u64) -> bool { return serialize_me
 // even an aligned align (STANDARD.md, align; Reader Obligations). The measure
 // charges the worst case, 7 bits (STANDARD.md, The Measure Stream).
 fn serialize_align(s: WriteStream&) -> bool {
-    guard s.error == SERIALIZE_ERROR_NONE else { return false; }
     let n = serialize_align_bits(s);
     if n == 0 { return true; }
-    guard serialize_write_check(s, n) else { return false; }
+    serialize_write_check(s, n);
     serialize_packer_write(s, 0, n);
     return true;
 }
@@ -345,7 +347,7 @@ fn serialize_align(s: ReadStream&) -> bool {
 fn serialize_align(s: MeasureStream&) -> bool { return serialize_measure_add(s, 7); }
 
 // end: the end of the object (STANDARD.md, end). The write and measure halves
-// emit nothing, cost nothing and return true, latched or not (U12). The read
+// emit nothing, cost nothing and return true (U12). The read
 // half consults the latch first, like every read; then refuses a whole byte or
 // more left in the stream as TRAILING_DATA, even a zero byte; then reads the 0
 // to 7 bits left in the final byte and refuses a set one as NONZERO_PADDING.
