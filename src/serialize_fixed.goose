@@ -1,6 +1,9 @@
 // serialize_fixed.goose -- Q-format fixed point (STANDARD.md, fixed;
 // DESIGN.md (a), (c)). integer_bits + fraction_bits equals the storage width,
-// min and max are whole units; a bad Q format or min > max aborts.
+// min and max are whole units that fit the Q format, min <= max. A bad
+// declaration aborts on a write or a measure (the C++ reference makes it a
+// compile error) and is refused as VALUE_OUT_OF_RANGE on a read, before any
+// bit moves (U16): never wrong data.
 
 import .serialize_stream;
 import .serialize_int128;
@@ -104,19 +107,36 @@ fn fixed_read_bits(s: ReadStream&, value: Int128&, bits: i64) -> bool {
     return true;
 }
 
-fn fixed_check_format(integer_bits: i64, fraction_bits: i64, width: i64) {
-    if integer_bits < 1 || fraction_bits < 0 || integer_bits + fraction_bits != width {
-        abort("serialize: integer_bits + fraction_bits must equal the storage width");
-    }
+// The Q format: fixed32 carries the 8-, 16- and 32-bit storage widths
+// (STANDARD.md, fixed), fixed64 and fixed128 their own width.
+fn fixed_format_ok(integer_bits: i64, fraction_bits: i64, width: i64) -> bool {
+    if integer_bits < 1 || fraction_bits < 0 { return false; }
+    let total = integer_bits + fraction_bits;
+    if width == 32 { return total == 8 || total == 16 || total == 32; }
+    return total == width;
 }
 
-// fixed32 carries the 8-, 16- and 32-bit storage widths (STANDARD.md, fixed).
-fn fixed_check_format32(integer_bits: i64, fraction_bits: i64) {
-    if integer_bits < 1 || fraction_bits < 0
-        || (integer_bits + fraction_bits != 8 && integer_bits + fraction_bits != 16
-            && integer_bits + fraction_bits != 32) {
+// The whole units a signed Q format holds: [-2^(integer_bits-1),
+// 2^(integer_bits-1) - 1], every int64 from 64 integer bits up (the C++
+// reference's min_representable_units and max_representable_units).
+fn fixed_bounds_fit(integer_bits: i64, min: i64, max: i64) -> bool {
+    if integer_bits >= 64 { return true; }
+    let half: i64 = 1 << (integer_bits - 1);
+    return min >= -half && max <= half - 1;
+}
+
+fn fixed_declaration_ok(integer_bits: i64, fraction_bits: i64, width: i64, min: i64, max: i64) -> bool {
+    return fixed_format_ok(integer_bits, fraction_bits, width) && min <= max
+        && fixed_bounds_fit(integer_bits, min, max);
+}
+
+// A write's or a measure's declaration: misuse aborts, naming the rule.
+fn fixed_check_declaration(integer_bits: i64, fraction_bits: i64, width: i64, min: i64, max: i64) {
+    if !fixed_format_ok(integer_bits, fraction_bits, width) {
         abort("serialize: integer_bits + fraction_bits must equal the storage width");
     }
+    if min > max { abort("serialize: min must not be greater than max"); }
+    if !fixed_bounds_fit(integer_bits, min, max) { abort("serialize: fixed min and max must fit the Q format"); }
 }
 
 fn fixed_write_core(s: WriteStream&, raw_value: Int128, raw_min: Int128, raw_max: Int128) -> bool {
@@ -125,12 +145,12 @@ fn fixed_write_core(s: WriteStream&, raw_value: Int128, raw_min: Int128, raw_max
     let offset = fixed_u128_sub(raw_value, raw_min);
     if bits == 0 {
         guard fixed_u128_compare(raw_value, raw_min) == 0
-            else { return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE); }
+            else { abort("serialize: value must be in [min, max]"); }
         guard s.error == SERIALIZE_ERROR_NONE else { return false; }
         return true;
     }
     if fixed_u128_compare(offset, span) > 0 {
-        return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+        abort("serialize: value must be in [min, max]");
     }
     guard serialize_write_check(s, bits) else { return false; }
     return fixed_write_bits(s, offset, bits);
@@ -164,43 +184,41 @@ fn fixed_measure_core(s: MeasureStream&, raw_min: Int128, raw_max: Int128) -> bo
 // ---- fixed32 ---------------------------------------------------------------
 
 fn serialize_fixed32(s: WriteStream&, value: i32, integer_bits: i64, fraction_bits: i64, min: i32, max: i32) -> bool {
-    fixed_check_format32(integer_bits, fraction_bits);
-    if min > max { abort("serialize: min must not be greater than max"); }
+    fixed_check_declaration(integer_bits, fraction_bits, 32, min, max);
     return fixed_write_core(s, fixed_u128_from_i64(value), fixed_raw_bound(min, fraction_bits),
                             fixed_raw_bound(max, fraction_bits));
 }
 fn serialize_fixed32(s: ReadStream&, value: i32&, integer_bits: i64, fraction_bits: i64, min: i32, max: i32) -> bool {
-    fixed_check_format32(integer_bits, fraction_bits);
-    if min > max { abort("serialize: min must not be greater than max"); }
+    guard fixed_declaration_ok(integer_bits, fraction_bits, 32, min, max) else {
+        return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+    }
     var raw = Int128 { lo: 0, hi: 0 };
     guard fixed_read_core(s, raw, fixed_raw_bound(min, fraction_bits), fixed_raw_bound(max, fraction_bits)) else { return false; }
     value = raw.lo as! i32;
     return true;
 }
 fn serialize_fixed32(s: MeasureStream&, value: i32, integer_bits: i64, fraction_bits: i64, min: i32, max: i32) -> bool {
-    fixed_check_format32(integer_bits, fraction_bits);
-    if min > max { abort("serialize: min must not be greater than max"); }
+    fixed_check_declaration(integer_bits, fraction_bits, 32, min, max);
     return fixed_measure_core(s, fixed_raw_bound(min, fraction_bits), fixed_raw_bound(max, fraction_bits));
 }
 
 // ---- fixed64 ---------------------------------------------------------------
 
 fn serialize_fixed64(s: WriteStream&, value: i64, integer_bits: i64, fraction_bits: i64, min: i64, max: i64) -> bool {
-    fixed_check_format(integer_bits, fraction_bits, 64);
-    if min > max { abort("serialize: min must not be greater than max"); }
+    fixed_check_declaration(integer_bits, fraction_bits, 64, min, max);
     return fixed_write_core(s, fixed_u128_from_i64(value), fixed_raw_bound(min, fraction_bits), fixed_raw_bound(max, fraction_bits));
 }
 fn serialize_fixed64(s: ReadStream&, value: i64&, integer_bits: i64, fraction_bits: i64, min: i64, max: i64) -> bool {
-    fixed_check_format(integer_bits, fraction_bits, 64);
-    if min > max { abort("serialize: min must not be greater than max"); }
+    guard fixed_declaration_ok(integer_bits, fraction_bits, 64, min, max) else {
+        return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+    }
     var raw = Int128 { lo: 0, hi: 0 };
     guard fixed_read_core(s, raw, fixed_raw_bound(min, fraction_bits), fixed_raw_bound(max, fraction_bits)) else { return false; }
     value = raw.lo as! i64;
     return true;
 }
 fn serialize_fixed64(s: MeasureStream&, value: i64, integer_bits: i64, fraction_bits: i64, min: i64, max: i64) -> bool {
-    fixed_check_format(integer_bits, fraction_bits, 64);
-    if min > max { abort("serialize: min must not be greater than max"); }
+    fixed_check_declaration(integer_bits, fraction_bits, 64, min, max);
     return fixed_measure_core(s, fixed_raw_bound(min, fraction_bits), fixed_raw_bound(max, fraction_bits));
 }
 
@@ -209,20 +227,19 @@ fn serialize_fixed64(s: MeasureStream&, value: i64, integer_bits: i64, fraction_
 // whole units, scaled to their 128-bit raw bounds (STANDARD.md, fixed).
 
 fn serialize_fixed128(s: WriteStream&, value: Int128, integer_bits: i64, fraction_bits: i64, min: i64, max: i64) -> bool {
-    fixed_check_format(integer_bits, fraction_bits, 128);
-    if min > max { abort("serialize: min must not be greater than max"); }
+    fixed_check_declaration(integer_bits, fraction_bits, 128, min, max);
     return fixed_write_core(s, value, fixed_raw_bound(min, fraction_bits), fixed_raw_bound(max, fraction_bits));
 }
 fn serialize_fixed128(s: ReadStream&, value: Int128&, integer_bits: i64, fraction_bits: i64, min: i64, max: i64) -> bool {
-    fixed_check_format(integer_bits, fraction_bits, 128);
-    if min > max { abort("serialize: min must not be greater than max"); }
+    guard fixed_declaration_ok(integer_bits, fraction_bits, 128, min, max) else {
+        return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+    }
     var raw = Int128 { lo: 0, hi: 0 };
     guard fixed_read_core(s, raw, fixed_raw_bound(min, fraction_bits), fixed_raw_bound(max, fraction_bits)) else { return false; }
     value = raw;
     return true;
 }
 fn serialize_fixed128(s: MeasureStream&, value: Int128, integer_bits: i64, fraction_bits: i64, min: i64, max: i64) -> bool {
-    fixed_check_format(integer_bits, fraction_bits, 128);
-    if min > max { abort("serialize: min must not be greater than max"); }
+    fixed_check_declaration(integer_bits, fraction_bits, 128, min, max);
     return fixed_measure_core(s, fixed_raw_bound(min, fraction_bits), fixed_raw_bound(max, fraction_bits));
 }

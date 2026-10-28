@@ -114,6 +114,7 @@ struct FloatRecord {
     expect_value: Int128,
     consumed: i64,
     canonical: bool,
+    sequence: bool,        // an `operation sequence` record, run by TestConformanceCorpus
     wire: u8[>..],
 }
 
@@ -135,6 +136,7 @@ fn ff_reset(rec: FloatRecord&) {
     rec.consumed = 0;
     rec.canonical = false;
     rec.wire.clear();
+    rec.sequence = false;
 }
 
 fn ff_parse_param_i64(s: const u8[:]) -> i64 {
@@ -154,7 +156,7 @@ fn ff_parse_param_f32(s: const u8[:]) -> f32 {
 // The reason a refused record states, from the closed list (STANDARD.md,
 // Refusal reasons); a missing or unknown reason is a malformed vector.
 fn ff_reason(name: const u8[:]) -> i32 {
-    for k in 8 {
+    for k in 9 {
         let kind = (k + 1) as! i32;
         if ff_equals(name, serialize_refusal_name(kind)) { return kind; }
     }
@@ -327,7 +329,11 @@ fn ff_run_record(rec: FloatRecord&) -> i64 {
     return 1;
 }
 
-fn ff_run_file(filename: const u8[:], kind: i64) -> i64 {
+// Runs every single-operation record of the file and returns their count;
+// counts its `operation sequence` records into `sequences` (the sNaN-shaped
+// neighbour vectors of 2.1), which the full runner, TestConformanceCorpus,
+// runs: none is dropped unseen.
+fn ff_run_file(filename: const u8[:], kind: i64, sequences: i64&) -> i64 {
     var content: u8[>..] = [];
     assert(read_file(filename, content));
     var rec = FloatRecord {
@@ -335,7 +341,7 @@ fn ff_run_file(filename: const u8[:], kind: i64) -> i64 {
         min_i: 0, max_i: 0, min_f: 0.0, max_f: 0.0, res: 1.0, refused: false,
         reason: SERIALIZE_ERROR_NONE, has_bits: false,
         expect_bits: 0, expect_value: Int128 { lo: 0, hi: 0 }, consumed: 0,
-        canonical: false, wire: [],
+        canonical: false, sequence: false, wire: [],
     };
     var count = 0;
     var start = 0;
@@ -344,12 +350,17 @@ fn ff_run_file(filename: const u8[:], kind: i64) -> i64 {
             let line = ff_trim_cr(content[start..i]);
             start = i + 1;
             if line.len == 0 {
-                count += ff_run_record(rec);
+                if rec.has_op && rec.sequence {
+                    sequences += 1;
+                } else {
+                    count += ff_run_record(rec);
+                }
                 ff_reset(rec);
                 rec.op_kind = kind;
             } else if line[0] != '#' {
                 if ff_starts_with(line, "operation ") {
                     rec.has_op = true;
+                    rec.sequence = ff_equals(line, "operation sequence");
                 } else if ff_starts_with(line, "param integer_bits = ") {
                     rec.integer_bits = ff_parse_param_i64(line[21..]);
                 } else if ff_starts_with(line, "param fraction_bits = ") {
@@ -375,7 +386,7 @@ fn ff_run_file(filename: const u8[:], kind: i64) -> i64 {
                     rec.expect_bits = ff_parse_hex_u64(line[14..]);
                     rec.has_bits = true;
                 } else if ff_starts_with(line, "expect value = ") {
-                    rec.expect_value = ff_parse_i128(line[15..]);
+                    if !rec.sequence { rec.expect_value = ff_parse_i128(line[15..]); }
                 } else if ff_starts_with(line, "consumed ") {
                     let v, ok = parse_int(line[9..]);
                     assert(ok);
@@ -407,16 +418,11 @@ fn ff_float_round_trip(bits: u32) {
 }
 
 // A non-finite pattern is not a value the format carries (STANDARD.md, Finite
-// values only): the writer latches NON_FINITE_FLOAT and writes nothing, and a
-// reader handed the raw bits refuses them as NON_FINITE_FLOAT with the
-// destination untouched.
+// values only): a writer handed one aborts, as write misuse (U9; the
+// TestSerialize*WriteNonFiniteAborts tests below), and a reader handed the
+// raw bits refuses them as NON_FINITE_FLOAT with the destination untouched.
 fn ff_float_refused(bits: u32) {
     assert(!serialize_float_bits_are_finite(bits));
-    var buf: u8[16] = [0; 16];
-    var w = serialize_write_stream_init(buf);
-    assert(!serialize_float(w, serialize_f32_from_bits(bits)));
-    assert(serialize_error(w) == SERIALIZE_ERROR_NON_FINITE_FLOAT);
-    assert(serialize_bits_processed(w) == 0);
     var wire: u8[16] = [0; 16];
     wire[0] = bits as! u8;
     wire[1] = (bits >> 8) as! u8;
@@ -433,11 +439,6 @@ fn ff_float_refused(bits: u32) {
 
 fn ff_double_refused(bits: u64) {
     assert(!serialize_double_bits_are_finite(bits));
-    var buf: u8[16] = [0; 16];
-    var w = serialize_write_stream_init(buf);
-    assert(!serialize_double(w, serialize_f64_from_bits(bits)));
-    assert(serialize_error(w) == SERIALIZE_ERROR_NON_FINITE_FLOAT);
-    assert(serialize_bits_processed(w) == 0);
     var wire: u8[16] = [0; 16];
     for i in 8 { wire[i] = (bits >> ((i * 8) as u64)) as! u8; }
     var r = serialize_read_stream_init(wire, 8);
@@ -493,18 +494,21 @@ fn ff_test_compressed_boundaries() {
 fn TestSerializeFloat() {
     ff_test_float_bit_transparency();
     ff_test_compressed_boundaries();
-    let n_float = ff_run_file("float.txt", 1);
-    let n_double = ff_run_file("double.txt", 2);
-    let n_fixed = ff_run_file("fixed.txt", 3);
-    let n_compressed = ff_run_file("compressed_float.txt", 4);
+    var sequences: i64 = 0;
+    let n_float = ff_run_file("float.txt", 1, sequences);
+    assert(sequences == 2);
+    let n_double = ff_run_file("double.txt", 2, sequences);
+    let n_fixed = ff_run_file("fixed.txt", 3, sequences);
+    let n_compressed = ff_run_file("compressed_float.txt", 4, sequences);
+    assert(sequences == 2);
     print("float.txt: ", n_float, " records");
     print("double.txt: ", n_double, " records");
     print("fixed.txt: ", n_fixed, " records");
     print("compressed_float.txt: ", n_compressed, " records");
     assert(n_float == 22);
-    assert(n_double == 22);
+    assert(n_double == 27);
     assert(n_fixed == 34);
-    assert(n_compressed == 36);
+    assert(n_compressed == 37);
 }
 
 // want-abort: serialize: compressed float min must be less than max
@@ -574,50 +578,76 @@ fn TestSerializeFloatCompressedTopInfiniteRefused() {
     assert(serialize_f32_bits(got) == 0x7F7FFFFE);
 }
 
-// fixed's WRITER refuses a raw value outside [min,max] in Q form, latches
-// VALUE_OUT_OF_RANGE and writes nothing for that call (STANDARD.md, fixed;
-// DESIGN.md (a), The latched kinds). The corpus pins only the reader's
-// refusal, so this is the write side's witness, at every storage width and in
-// the zero-width (min == max) case. Q16.16, Q48.16, Q112.16 over [-2,2]: the
-// raw bounds are -131072 and 131072.
-fn TestSerializeFixedWriteRefusesOutOfRange() {
-    let lo_out = Int128 { lo: 0xFFFFFFFFFFFDFFFF, hi: 0xFFFFFFFFFFFFFFFF }; // -131073
-    for k in 6 {
+// A non-finite float or double handed to a writer is write misuse: it
+// aborts, naming the rule, and writes nothing (STANDARD.md, Finite values
+// only; U9). A signalling NaN pattern, so no conversion quiets it first.
+// want-abort: serialize: float must be finite
+fn TestSerializeFloatWriteNonFiniteAborts() {
+    var buf: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(buf);
+    serialize_float(w, serialize_f32_from_bits(0x7F800001));
+}
+
+// want-abort: serialize: double must be finite
+fn TestSerializeDoubleWriteNonFiniteAborts() {
+    var buf: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(buf);
+    serialize_double(w, serialize_f64_from_bits(0xFFF0000000000000));
+}
+
+// fixed's WRITER accepts its raw bounds in Q form at every storage width,
+// and aborts on a raw value outside [min,max] as write misuse (U9; the
+// TestSerializeFixed*WriteOutsideAborts tests below), STANDARD.md, fixed. The
+// corpus pins only the reader's refusal, so these are the write side's
+// witness, at every storage width and in the zero-width (min == max) case.
+// Q16.16, Q48.16, Q112.16 over [-2,2]: the raw bounds are -131072 and 131072.
+fn TestSerializeFixedWriteAcceptsItsBounds() {
+    for k in 3 {
         var buf: u8[32] = [0; 32];
         var w = serialize_write_stream_init(buf);
-        // The bounds themselves are accepted.
-        if k < 2 {
+        if k == 0 {
             assert(serialize_fixed32(w, 131072, 16, 16, -2, 2));
             assert(serialize_fixed32(w, -131072, 16, 16, -2, 2));
-        } else if k < 4 {
+        } else if k == 1 {
             assert(serialize_fixed64(w, 131072, 48, 16, -2, 2));
             assert(serialize_fixed64(w, -131072, 48, 16, -2, 2));
         } else {
             assert(serialize_fixed128(w, Int128 { lo: 131072, hi: 0 }, 112, 16, -2, 2));
             assert(serialize_fixed128(w, Int128 { lo: 0xFFFFFFFFFFFE0000, hi: 0xFFFFFFFFFFFFFFFF }, 112, 16, -2, 2));
         }
-        let before = serialize_bits_processed(w);
-        assert(before == 38); // two writes of 19 bits: span 262144
-        // One past each bound is refused.
-        var ok = true;
-        if k == 0 { ok = serialize_fixed32(w, 131073, 16, 16, -2, 2); }
-        if k == 1 { ok = serialize_fixed32(w, -131073, 16, 16, -2, 2); }
-        if k == 2 { ok = serialize_fixed64(w, 131073, 48, 16, -2, 2); }
-        if k == 3 { ok = serialize_fixed64(w, -131073, 48, 16, -2, 2); }
-        if k == 4 { ok = serialize_fixed128(w, Int128 { lo: 131073, hi: 0 }, 112, 16, -2, 2); }
-        if k == 5 { ok = serialize_fixed128(w, lo_out, 112, 16, -2, 2); }
-        assert(!ok);
-        assert(serialize_error(w) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
-        assert(serialize_bits_processed(w) == before);
-        // Failure is terminal: an in-range write after it is refused too.
-        assert(!serialize_fixed32(w, 0, 16, 16, -2, 2));
-        assert(serialize_bits_processed(w) == before);
+        assert(serialize_bits_processed(w) == 38); // two writes of 19 bits: span 262144
     }
-    // Zero width (min == max): only the one value is writable, in no bits.
+    // Zero width (min == max): the one value is writable, in no bits.
     var zbuf: u8[8] = [0; 8];
     var z = serialize_write_stream_init(zbuf);
     assert(serialize_fixed32(z, 65536, 16, 16, 1, 1));
     assert(serialize_bits_processed(z) == 0);
-    assert(!serialize_fixed32(z, 65537, 16, 16, 1, 1));
-    assert(serialize_error(z) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
 }
+
+fn ff_fixed_write_outside(k: i64) {
+    var buf: u8[32] = [0; 32];
+    var w = serialize_write_stream_init(buf);
+    let lo_out = Int128 { lo: 0xFFFFFFFFFFFDFFFF, hi: 0xFFFFFFFFFFFFFFFF }; // -131073
+    if k == 0 { serialize_fixed32(w, 131073, 16, 16, -2, 2); }
+    if k == 1 { serialize_fixed32(w, -131073, 16, 16, -2, 2); }
+    if k == 2 { serialize_fixed64(w, 131073, 48, 16, -2, 2); }
+    if k == 3 { serialize_fixed64(w, -131073, 48, 16, -2, 2); }
+    if k == 4 { serialize_fixed128(w, Int128 { lo: 131073, hi: 0 }, 112, 16, -2, 2); }
+    if k == 5 { serialize_fixed128(w, lo_out, 112, 16, -2, 2); }
+    if k == 6 { serialize_fixed32(w, 65537, 16, 16, 1, 1); }
+}
+
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeFixed32WriteAboveMaxAborts() { ff_fixed_write_outside(0); }
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeFixed32WriteBelowMinAborts() { ff_fixed_write_outside(1); }
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeFixed64WriteAboveMaxAborts() { ff_fixed_write_outside(2); }
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeFixed64WriteBelowMinAborts() { ff_fixed_write_outside(3); }
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeFixed128WriteAboveMaxAborts() { ff_fixed_write_outside(4); }
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeFixed128WriteBelowMinAborts() { ff_fixed_write_outside(5); }
+// want-abort: serialize: value must be in [min, max]
+fn TestSerializeFixedZeroWidthWriteOtherValueAborts() { ff_fixed_write_outside(6); }

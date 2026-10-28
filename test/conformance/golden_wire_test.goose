@@ -73,7 +73,7 @@ fn golden_read(wire: const u8[:], steps: Step[64]&) -> bool {
     for i in wire.len { padded[i] = wire[i]; }
     var r = serialize_read_stream_init(padded, wire.len);
     var failed: i64 = -1;
-    return conf_run_steps(r, steps, 0, 29, false, SAB_NONE, failed);
+    return conf_run_steps(r, steps, 0, 29, false, SAB_NONE, failed, 0);
 }
 
 fn golden_same(a: Step[64], b: Step[64]) -> bool {
@@ -105,7 +105,7 @@ fn TestGoldenWireFormat() {
     var wbuf: u8[256] = [0xAA; 256];
     var w = serialize_write_stream_init(wbuf);
     var failed: i64 = -1;
-    assert(conf_run_steps(w, base, 0, 29, false, SAB_NONE, failed));
+    assert(conf_run_steps(w, base, 0, 29, false, SAB_NONE, failed, 0));
     serialize_flush(w);
     assert(serialize_bits_processed(w) == 843); // the object; the end writes nothing
     assert(serialize_bytes_processed(w) == 106);

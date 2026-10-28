@@ -38,7 +38,7 @@ fn serialize_write_length(s: WriteStream&, value: i64, buffer_size: i64) -> bool
 }
 
 fn serialize_read_length(s: ReadStream&, value: i64&, buffer_size: i64) -> bool {
-    if buffer_size < 1 { abort("serialize: min must not be greater than max"); }
+    guard buffer_size >= 1 else { return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE); }
     let bits = serialize_length_bits(buffer_size - 1);
     guard serialize_read_check(s, bits) else { return false; }
     var v: u64 = 0;
@@ -97,10 +97,12 @@ fn serialize_valid_utf8(data: const u8[:]) -> bool {
 
 // ---- bytes (STANDARD.md, bytes; DESIGN.md (d)) ----------------------------
 
-// Aligns FIRST, then the count raw bytes, which are not transmitted.
+// Aligns FIRST, then the count raw bytes, which are not transmitted. The
+// writer checks room for the align and the payload together before writing
+// either (U10).
 fn serialize_bytes(s: WriteStream&, data: const u8[:]) -> bool {
-    guard serialize_align(s) else { return false; }
-    guard serialize_write_check(s, data.len * 8) else { return false; }
+    guard serialize_write_check(s, serialize_align_bits(s) + data.len * 8) else { return false; }
+    serialize_align(s);
     serialize_packer_write_bytes(s, data);
     return true;
 }
@@ -120,24 +122,48 @@ fn serialize_bytes(s: MeasureStream&, data: const u8[:]) -> bool {
 
 // ---- string (STANDARD.md, string) -----------------------------------------
 
-// int(length, 0, buffer_size - 1), then the bytes, which align. The writer is
-// handed well-formed UTF-8 with no zero byte (aborts otherwise). The reader
-// checks the claimed length against the stream BEFORE it touches the
-// destination, then scans the whole payload for a zero byte (EMBEDDED_NUL)
-// before it validates the encoding (INVALID_UTF8), so a payload that breaks
-// both rules is EMBEDDED_NUL (STANDARD.md, string).
-fn serialize_string(s: WriteStream&, value: const u8[:], buffer_size: i64) -> bool {
+// int(length, 0, buffer_size - 1), then the bytes, which align. The writer
+// and the measure are handed well-formed UTF-8 with no zero byte that fits
+// buffer_size - 1 (abort otherwise; U3, U4). The writer checks room for the
+// whole operation, length, align and payload, before writing any of it
+// (U10). The reader checks the declaration against the destination, then the
+// claimed length against the stream, BEFORE it touches the destination, then
+// scans the whole payload for a zero byte (EMBEDDED_NUL) before it validates
+// the encoding (INVALID_UTF8), so a payload that breaks both rules is
+// EMBEDDED_NUL (STANDARD.md, string).
+fn serialize_string_check(value: const u8[:], buffer_size: i64) {
+    if buffer_size < 1 { abort("serialize: min must not be greater than max"); }
     if value.len > buffer_size - 1 { abort("serialize: string length must fit buffer_size"); }
     for i in value.len {
         if value[i] == 0 { abort("serialize: string must not contain a zero byte"); }
     }
     if !serialize_valid_utf8(value) { abort("serialize: string must be valid UTF-8"); }
-    guard serialize_write_length(s, value.len, buffer_size) else { return false; }
+}
+
+fn serialize_string(s: WriteStream&, value: const u8[:], buffer_size: i64) -> bool {
+    serialize_string_check(value, buffer_size);
+    let length_bits = serialize_length_bits(buffer_size - 1);
+    let align = (8 - (s.bits_written + length_bits) % 8) % 8;
+    guard serialize_write_check(s, length_bits + align + value.len * 8) else { return false; }
+    serialize_write_length(s, value.len, buffer_size);
     return serialize_bytes(s, value);
 }
 
+// The capacity of a string read's destination (U16): a limited builder
+// (u8[..k], u8[..]) has its own, which buffer_size - 1 must not exceed; a
+// growable one (u8[>..], u8[>..<]) has none.
+fn serialize_string_capacity(value: u8[>..]&) -> i64 { return 0x7FFFFFFFFFFFFFFF; }
+fn serialize_string_capacity(value: u8[>..<]&) -> i64 { return 0x7FFFFFFFFFFFFFFF; }
+fn serialize_string_capacity<T>(value: T&) -> i64 { return value.cap; }
+
 fn serialize_string<T>(s: ReadStream&, value: T&, buffer_size: i64) -> bool {
     guard serialize_error(s) == SERIALIZE_ERROR_NONE else { return false; }
+    // A destination that cannot hold buffer_size - 1 bytes is the caller's
+    // bad declaration, refused before any bit moves whatever the wire holds:
+    // never a capacity trap the wire chooses (U16; audit ledger H, 2026-10-27).
+    guard buffer_size - 1 <= serialize_string_capacity(value) else {
+        return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+    }
     var length: i64 = 0;
     guard serialize_read_length(s, length, buffer_size) else { return false; }
     if length == 0 {
@@ -164,7 +190,22 @@ fn serialize_string<T>(s: ReadStream&, value: T&, buffer_size: i64) -> bool {
 }
 
 fn serialize_string(s: MeasureStream&, value: const u8[:], buffer_size: i64) -> bool {
-    if value.len > buffer_size - 1 { abort("serialize: string length must fit buffer_size"); }
+    serialize_string_check(value, buffer_size);
     guard serialize_measure_length(s, buffer_size) else { return false; }
     return serialize_bytes(s, value);
+}
+
+// ---- copy_string (the reference helper; U15) -------------------------------
+
+// serialize_copy_string: zeroes the destination, then copies at most
+// dest.len - 1 bytes of source, stopping at a zero byte, so the destination
+// always ends in a zero byte. A destination of no bytes is caller misuse.
+fn serialize_copy_string(dest: u8[:], source: const u8[:]) {
+    if dest.len < 1 { abort("serialize: copy_string destination must hold at least one byte"); }
+    for i in dest.len { dest[i] = 0; }
+    var i: i64 = 0;
+    while i < dest.len - 1 && i < source.len && source[i] != 0 {
+        dest[i] = source[i];
+        i += 1;
+    }
 }
