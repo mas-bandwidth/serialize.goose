@@ -23,6 +23,14 @@
 # mas-bandwidth/serialize main). A SERIALIZE_CONFORMANCE_DIR that is not a
 # directory fails, naming it: never a silent fall back to the vendored copy.
 #
+# EXTRA CORPUS DIRECTORIES: conformance-regress/ (this port's fixed regression
+# vectors) and every directory of SERIALIZE_CONFORMANCE_EXTRA_DIR (':'-separated)
+# are staged beside the corpus with their *.txt renamed *.extra, so the corpus
+# run (which discovers *.txt and asserts the committed corpus's record count)
+# never counts them and the controls never see them; TestConformanceCorpus runs
+# the *.extra files separately and requires them all to pass. A named directory
+# that is not a directory fails, naming it.
+#
 # Output: `RUN Test<Name>`, then `--- PASS Test<Name>` or `--- FAIL Test<Name>`
 # with the run's output indented below. The runner exits nonzero on any FAIL, on
 # a missing or empty test/<name>/, and on a test file that declares no test,
@@ -39,6 +47,20 @@ corpus=${SERIALIZE_CONFORMANCE_DIR:-$root/conformance}
 if [ ! -d "$corpus" ]; then
     echo "FAIL SERIALIZE_CONFORMANCE_DIR=$corpus is not a directory"
     exit 1
+fi
+
+extras="$root/conformance-regress"
+if [ -n "${SERIALIZE_CONFORMANCE_EXTRA_DIR:-}" ]; then
+    oldifs=$IFS
+    IFS=:
+    for d in $SERIALIZE_CONFORMANCE_EXTRA_DIR; do
+        if [ ! -d "$d" ]; then
+            echo "FAIL SERIALIZE_CONFORMANCE_EXTRA_DIR entry $d is not a directory"
+            exit 1
+        fi
+        extras="$extras:$d"
+    done
+    IFS=$oldifs
 fi
 
 if [ $# -gt 0 ] && [ -n "$1" ]; then
@@ -79,6 +101,15 @@ for name in $names; do
     for f in "$corpus"/*.txt; do
         [ -f "$f" ] && cp "$f" "$stage"/
     done
+    oldifs=$IFS
+    IFS=:
+    for d in $extras; do
+        [ -d "$d" ] || continue
+        for f in "$d"/*.txt; do
+            [ -f "$f" ] && cp "$f" "$stage/$(basename "$f" .txt).extra"
+        done
+    done
+    IFS=$oldifs
     dirfail=0
     for file in $files; do
         base=$(basename "$file" .goose)

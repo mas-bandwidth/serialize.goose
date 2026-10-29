@@ -1280,6 +1280,35 @@ fn conf_run_corpus(sabotage: i64, tally: Tally&) -> i64 {
     return total;
 }
 
+fn conf_is_extra(name: const u8[:]) -> bool {
+    return name.len > 6 && name[name.len - 6] == '.' && name[name.len - 5] == 'e'
+        && name[name.len - 4] == 'x' && name[name.len - 3] == 't'
+        && name[name.len - 2] == 'r' && name[name.len - 1] == 'a';
+}
+
+// Runs every *.extra in the staged directory: the regression vectors and the
+// nightly differential's generated file, staged by tools/run_tests.sh under a
+// name the corpus run does not discover. They run in an ordinary run only; the
+// controls never stage them. Returns the number of records run.
+fn conf_run_extra(sabotage: i64, tally: Tally&) -> i64 {
+    var names: u8[>..] = [];
+    assert(list_dir(".", names));
+    var total: i64 = 0;
+    var start: i64 = 0;
+    for i in names.len + 1 {
+        if i == names.len || names[i] == '\n' {
+            let name = names[start..i];
+            start = i + 1;
+            if name.len > 0 && conf_is_extra(name) {
+                let n = conf_run_file(name, sabotage, tally);
+                print(name, ": ", n, " records (extra)");
+                total += n;
+            }
+        }
+    }
+    return total;
+}
+
 // The vector names a conformance-controls/<rule>.expected file lists: one per
 // line, `#` comments and blank lines skipped.
 fn conf_read_expected(filename: const u8[:]) -> u8[>..] {
@@ -1384,6 +1413,15 @@ fn TestConformanceCorpus() {
     let total = conf_run_corpus(SAB_NONE, tally);
     assert(total == 413);
     assert(tally.failures == 0);
+
+    // The extra vectors (conformance-regress/ and the differential's file) run
+    // on their own tally, so the committed corpus's count above still guards a
+    // runner that silently skips files.
+    var extra_tally = conf_new_tally();
+    let extra_total = conf_run_extra(SAB_NONE, extra_tally);
+    print("extra: ", extra_total, " records, ", extra_tally.failures, " fail");
+    assert(extra_tally.records == extra_total);
+    assert(extra_tally.failures == 0);
 
     // The sabotaged reader: the align rule switched off through an argument,
     // run against the real align.txt. It must go red on exactly the vectors
