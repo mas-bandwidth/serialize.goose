@@ -7,19 +7,22 @@
 import .serialize_stream;
 
 // Stores one 64-bit word at data[base..base+8] as 8 little-endian bytes by
-// shift (STANDARD.md, General Conventions; DESIGN.md (b), (d)). The assert
-// gives Goose's bounds analysis the window length so index checks inside the
-// 8 stores can fold away.
+// shift (STANDARD.md, General Conventions; DESIGN.md (b), (d)). The window is a
+// slice of exactly 8 bytes, checked once where it is taken: Goose's bounds
+// analysis then knows its length, so the 8 stores carry no index check and the
+// C compiler merges them into one store. (An assert does not reach the bounds
+// analysis: with one, every store kept its own check.) A window outside data
+// aborts at the slice, in every build, as the assert did.
 fn serialize_bitpacker_store_word(data: u8[:], base: i64, word: u64) {
-    assert(base >= 0 && base + 7 < data.len);
-    data[base] = word as! u8;
-    data[base + 1] = (word >> 8) as! u8;
-    data[base + 2] = (word >> 16) as! u8;
-    data[base + 3] = (word >> 24) as! u8;
-    data[base + 4] = (word >> 32) as! u8;
-    data[base + 5] = (word >> 40) as! u8;
-    data[base + 6] = (word >> 48) as! u8;
-    data[base + 7] = (word >> 56) as! u8;
+    let window = data[base..base + 8];
+    window[0] = word as! u8;
+    window[1] = (word >> 8) as! u8;
+    window[2] = (word >> 16) as! u8;
+    window[3] = (word >> 24) as! u8;
+    window[4] = (word >> 32) as! u8;
+    window[5] = (word >> 40) as! u8;
+    window[6] = (word >> 48) as! u8;
+    window[7] = (word >> 56) as! u8;
 }
 
 // Loads one 64-bit little-endian window from data[base..base+8] (STANDARD.md,
@@ -27,16 +30,16 @@ fn serialize_bitpacker_store_word(data: u8[:], base: i64, word: u64) {
 // contract guarantees data.len >= bytes + 8, so every byte position inside the
 // message has a full 8-byte window inside data.
 fn serialize_bitpacker_load_word(data: const u8[:], base: i64) -> u64 {
-    assert(base >= 0 && base + 7 < data.len);
-    let b0: u64 = data[base];
+    let window = data[base..base + 8]; // checked once: the 8 loads carry no check
+    let b0: u64 = window[0];
     return b0
-        | ((data[base + 1] as u64) << 8)
-        | ((data[base + 2] as u64) << 16)
-        | ((data[base + 3] as u64) << 24)
-        | ((data[base + 4] as u64) << 32)
-        | ((data[base + 5] as u64) << 40)
-        | ((data[base + 6] as u64) << 48)
-        | ((data[base + 7] as u64) << 56);
+        | ((window[1] as u64) << 8)
+        | ((window[2] as u64) << 16)
+        | ((window[3] as u64) << 24)
+        | ((window[4] as u64) << 32)
+        | ((window[5] as u64) << 40)
+        | ((window[6] as u64) << 48)
+        | ((window[7] as u64) << 56);
 }
 
 // Packs the low `bits` bits of value, bits in [1,64], value < 2^bits, the
