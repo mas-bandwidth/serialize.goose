@@ -1,6 +1,6 @@
 RESULT: sra-goose sha=af700c3d96ee tier: frontier
 
-head: 2fe3774b1d839a756c95397363af30b9775fcdd2
+head: 012a8c3a011345e0c2e346a690e9648e7993fbf5
 branch: sprint/serialize-audit-goose/sra-goose
 verdict: bounded — the read path is bounded at every entry point; no critical, high or medium finding; five info/low observations reported and accepted; no fix made (report-only scope)
 
@@ -11,7 +11,7 @@ gate:
   make fuzz:      TestDifferentialAgainstSerializeC PASS — 2000 programs, 486 mutants; refusals by reason past_end 87, value_out_of_range 158, nonzero_padding 7, trailing_data 83, non_finite_float 52, invalid_utf8 17, embedded_nul 13, non_canonical 1; all six negative controls red for their own reason
 
 output:
-  docs/security/AUDIT-2026-11-05.md — the entry-point table (function, input, bound relied on, verdict) and findings sra-goose-1..5, each with file:line, what attacker input can reach, severity, reduction and pin
+  docs/security/AUDIT-2026-11-05.md — the entry-point table (function, input, bound relied on, verdict) covering every read entry point the task names, the read-side accounting accessors (serialize_bits_remaining, serialize_bits_processed/_bytes_processed, serialize_align_bits) included, and findings sra-goose-1..5, each with file:line, what attacker input can reach, severity, reduction and pin; the not-in-scope section names stack/recursion (schema-bounded, never wire-driven) and allocation-by-input bounds
 
 report:
   - sra-goose-1 (info, accepted): src/serialize_bitpacker.goose:29-40,:82,:93 — window load and cross-word tail read bounded only by the slack contract, enforced at src/serialize_stream.goose:89-93,:100-106; pinned by make witnesses read-init-misuse-refused and TestBitpackerReadSlackMissingRefuses.
