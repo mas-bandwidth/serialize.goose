@@ -13,66 +13,45 @@ import .serialize_int128;
 // storage width, exactly as int128's bounds do.
 
 fn fixed_u128_from_i64(value: i64) -> Int128 {
-    let hi: u64 = if value < 0 { 0xffffffffffffffff } else { 0 };
-    return Int128 { lo: value as! u64, hi: hi };
+    return serialize_int128_from_int64(value);
 }
 
 fn fixed_u128_sub(a: Int128, b: Int128) -> Int128 {
-    let lo = a.lo - b.lo;
-    let borrow: u64 = if a.lo < b.lo { 1 } else { 0 };
-    return Int128 { lo: lo, hi: a.hi - b.hi - borrow };
+    return serialize_int128_sub(a, b);
 }
 
 fn fixed_u128_add(a: Int128, b: Int128) -> Int128 {
-    let lo = a.lo + b.lo;
-    let carry: u64 = if lo < a.lo { 1 } else { 0 };
-    return Int128 { lo: lo, hi: a.hi + b.hi + carry };
+    return serialize_int128_add(a, b);
 }
 
 fn fixed_u128_compare(a: Int128, b: Int128) -> i64 {
-    if a.hi != b.hi { return if a.hi < b.hi { -1 } else { 1 }; }
-    if a.lo != b.lo { return if a.lo < b.lo { -1 } else { 1 }; }
-    return 0;
+    // These lanes hold unsigned offsets and spans, even for signed Q formats.
+    return serialize_u128_compare(Uint128 { lo: a.lo, hi: a.hi }, Uint128 { lo: b.lo, hi: b.hi });
 }
 
 fn fixed_bit_length64(value: u64) -> i64 {
-    var v = value;
-    var bits: i64 = 0;
-    while v != 0 {
-        bits += 1;
-        v = v >> 1;
-    }
-    return bits;
+    return serialize_u128_bit_length(Uint128 { lo: value, hi: 0 });
 }
 
 fn fixed_u128_bit_length(value: Int128) -> i64 {
-    if value.hi != 0 { return 64 + fixed_bit_length64(value.hi); }
-    return fixed_bit_length64(value.lo);
+    return serialize_u128_bit_length(Uint128 { lo: value.lo, hi: value.hi });
 }
 
 // min << fraction_bits in the 128-bit domain (serialize.c serialize_raw_bound).
 fn fixed_raw_bound(whole: i64, fraction_bits: i64) -> Int128 {
-    var u = fixed_u128_from_i64(whole);
-    for i in fraction_bits {
-        let carry = u.lo >> 63;
-        u = Int128 { lo: u.lo << 1, hi: (u.hi << 1) | carry };
-    }
-    return u;
+    let u = fixed_u128_from_i64(whole);
+    let shifted = serialize_u128_shl(Uint128 { lo: u.lo, hi: u.hi }, fraction_bits);
+    return Int128 { lo: shifted.lo, hi: shifted.hi };
 }
 
 fn fixed_u128_group32(value: Int128, group: i64) -> u32 {
-    if group == 0 { return (value.lo & 0xffffffff) as! u32; }
-    if group == 1 { return (value.lo >> 32) as! u32; }
-    if group == 2 { return (value.hi & 0xffffffff) as! u32; }
-    return (value.hi >> 32) as! u32;
+    return serialize_u128_group32(Uint128 { lo: value.lo, hi: value.hi }, group);
 }
 
 fn fixed_u128_set_group32(value: Int128&, group: i64, g: u32) {
-    let wide: u64 = g;
-    if group == 0 { value.lo = value.lo | wide; }
-    else if group == 1 { value.lo = value.lo | (wide << 32); }
-    else if group == 2 { value.hi = value.hi | wide; }
-    else { value.hi = value.hi | (wide << 32); }
+    var u = Uint128 { lo: value.lo, hi: value.hi };
+    serialize_u128_set_group32(u, group, g);
+    value = Int128 { lo: u.lo, hi: u.hi };
 }
 
 // STANDARD.md, fixed: raw_value - raw_min in `bits` bits, split into 32-bit

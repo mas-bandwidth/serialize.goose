@@ -57,6 +57,19 @@ fn serialize_int128_add(a: Int128, b: Int128) -> Int128 {
     return Int128 { lo: r.lo, hi: r.hi };
 }
 
+// Left shift in the unsigned lane domain, with no full-width lane shifts.
+fn serialize_u128_shl(value: Uint128, bits: i64) -> Uint128 {
+    if bits <= 0 { return value; }
+    if bits >= 128 { return Uint128 { lo: 0, hi: 0 }; }
+    if bits >= 64 {
+        return Uint128 { lo: 0, hi: value.lo << ((bits - 64) as u64) };
+    }
+    return Uint128 {
+        lo: value.lo << (bits as u64),
+        hi: (value.hi << (bits as u64)) | (value.lo >> ((64 - bits) as u64)),
+    };
+}
+
 // Bit length, 0 for zero (serialize.c serialize_u128_bit_length).
 fn serialize_u128_bit_length(v: Uint128) -> i64 {
     if v.hi != 0 { return 64 + (64 - clz(v.hi)); }
@@ -94,7 +107,7 @@ fn serialize_u128_write_bits(s: WriteStream&, value: Uint128, bits: i64) {
         var chunk = bits - written;
         if chunk > 32 { chunk = 32; }
         let g: u64 = serialize_u128_group32(value, group);
-        let mask: u64 = if chunk == 64 { 0xffffffffffffffff } else { ((1 as u64) << (chunk as u64)) - 1 };
+        let mask: u64 = ((1 as u64) << (chunk as u64)) - 1;
         serialize_packer_write(s, g & mask, chunk);
         written += chunk;
         group += 1;
