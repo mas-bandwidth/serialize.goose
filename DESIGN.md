@@ -15,9 +15,9 @@ supplied the shape of this page. Both are read, never imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`,
 `conformance/*.txt` and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.1
-(`bd3d67e23c8acc2c45eff69633dbe16c029a2cba`, 2026-10-28, the merge of the
-2.1.1 rulings), format 2.0 still. 2.1.1 changed IMPLEMENTING.md only: one
+VERBATIM from mas-bandwidth/serialize at tag v2.1.3
+(`7bf1877b38cfdd737d0bf102a546ec2674335786`, 2026-10-29, the 2.1.3 release;
+2.1.1 merged the 2.1.1 rulings), format 2.0 still. 2.1.1 changed IMPLEMENTING.md only: one
 write-misuse mechanism, the trap (U9), a measure making every write check
 (U6), lone surrogates as write misuse (U3), the copy_string back-off and the
 exports ruling (U15); the corpus and STANDARD.md are 2.1.0's. 2.1

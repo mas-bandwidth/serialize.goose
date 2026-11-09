@@ -138,6 +138,7 @@ fn fz_write(w: WriteStream&, line: const u8[:]) -> bool {
     }
     if kind == "align" { return serialize_align(w); }
     if kind == "end" { return serialize_end(w); }
+    if kind == "reject" || kind == "read" { return true; }
     if kind == "object" {
         var o = FzObject { b: true, i: 3, u: 42 };
         return serialize_object(w, o);
@@ -213,6 +214,7 @@ fn fz_measure(m: MeasureStream&, line: const u8[:]) -> bool {
     }
     if kind == "align" { return serialize_align(m); }
     if kind == "end" { return serialize_end(m); }
+    if kind == "reject" || kind == "read" { return true; }
     if kind == "object" {
         var o = FzObject { b: true, i: 3, u: 42 };
         return serialize_object(m, o);
@@ -237,7 +239,8 @@ fn fz_run_measure(out: u8[>..]&, id: i64, ops: const u8[:][:]) {
 // Reads one operation; on success appends its value tokens (each with a
 // leading space) to toks, in the host's spelling (fuzz/host.c, read_program).
 fn fz_read(r: ReadStream&, line: const u8[:], toks: u8[>..]&) -> bool {
-    let t = split(line, ' ');
+    let body = if line.len > 5 && line[0..5] == "read " { line[5..line.len] } else { line };
+    let t = split(body, ' ');
     let kind = t[0];
     if kind == "bits" {
         var v: u32 = 0;
@@ -376,6 +379,7 @@ fn fz_read(r: ReadStream&, line: const u8[:], toks: u8[>..]&) -> bool {
     }
     if kind == "align" { return serialize_align(r); }
     if kind == "end" { return serialize_end(r); }
+    if kind == "reject" { return serialize_reject(r); }
     if kind == "object" {
         var o = FzObject { b: false, i: 0, u: 0 };
         guard serialize_object(r, o) else { return false; }
