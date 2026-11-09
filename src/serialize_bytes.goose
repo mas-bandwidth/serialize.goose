@@ -28,6 +28,7 @@ fn serialize_length_bits(max: i64) -> i64 {
 
 fn serialize_write_length(s: WriteStream&, value: i64, buffer_size: i64) -> bool {
     if buffer_size < 1 { abort("serialize: min must not be greater than max"); }
+    if buffer_size - 1 > 2147483647 { abort("serialize: string buffer_size must be in [1, 2147483648]"); }
     if value < 0 || value > buffer_size - 1 { abort("serialize: string length must fit buffer_size"); }
     let bits = serialize_length_bits(buffer_size - 1);
     serialize_write_check(s, bits);
@@ -38,7 +39,7 @@ fn serialize_write_length(s: WriteStream&, value: i64, buffer_size: i64) -> bool
 }
 
 fn serialize_read_length(s: ReadStream&, value: i64&, buffer_size: i64) -> bool {
-    guard buffer_size >= 1 else { return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE); }
+    guard buffer_size >= 1 && buffer_size - 1 <= 2147483647 else { return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE); }
     let bits = serialize_length_bits(buffer_size - 1);
     guard serialize_read_check(s, bits) else { return false; }
     var v: u64 = 0;
@@ -52,6 +53,7 @@ fn serialize_read_length(s: ReadStream&, value: i64&, buffer_size: i64) -> bool 
 
 fn serialize_measure_length(s: MeasureStream&, buffer_size: i64) -> bool {
     if buffer_size < 1 { abort("serialize: min must not be greater than max"); }
+    if buffer_size - 1 > 2147483647 { abort("serialize: string buffer_size must be in [1, 2147483648]"); }
     return serialize_measure_add(s, serialize_length_bits(buffer_size - 1));
 }
 
@@ -133,6 +135,7 @@ fn serialize_bytes(s: MeasureStream&, data: const u8[:]) -> bool {
 // EMBEDDED_NUL (STANDARD.md, string).
 fn serialize_string_check(value: const u8[:], buffer_size: i64) {
     if buffer_size < 1 { abort("serialize: min must not be greater than max"); }
+    if buffer_size - 1 > 2147483647 { abort("serialize: string buffer_size must be in [1, 2147483648]"); }
     if value.len > buffer_size - 1 { abort("serialize: string length must fit buffer_size"); }
     for i in value.len {
         if value[i] == 0 { abort("serialize: string must not contain a zero byte"); }
@@ -158,6 +161,9 @@ fn serialize_string_capacity<T>(value: T&) -> i64 { return value.cap; }
 
 fn serialize_string<T>(s: ReadStream&, value: T&, buffer_size: i64) -> bool {
     guard serialize_error(s) == SERIALIZE_ERROR_NONE else { return false; }
+    guard buffer_size >= 1 && buffer_size - 1 <= 2147483647 else {
+        return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+    }
     // A destination that cannot hold buffer_size - 1 bytes is the caller's
     // bad declaration, refused before any bit moves whatever the wire holds:
     // never a capacity trap the wire chooses (U16; audit ledger H, 2026-10-27).
