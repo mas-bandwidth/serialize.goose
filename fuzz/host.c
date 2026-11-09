@@ -81,11 +81,13 @@ enum {
     OP_INT, OP_INT64, OP_INT_REL, OP_U128, OP_I128, OP_FLOAT, OP_DOUBLE,
     OP_FIXED32, OP_FIXED64, OP_FIXED128, OP_CFLOAT, OP_CFLOAT_PRE,
     OP_BYTES, OP_STRING, OP_ALIGN, OP_OBJECT, OP_KINDS,
-    OP_END = OP_KINDS
+    OP_END = OP_KINDS,
+    OP_REJECT
 };
 
 typedef struct {
     int kind;
+    int bad_read;
     int bits;
     int frac;
     uint64_t u, u2, u3;
@@ -102,7 +104,7 @@ typedef struct {
 typedef struct {
     int id;
     int nops;
-    Op ops[MAXOPS + 1];
+    Op ops[MAXOPS + 2];
     unsigned char bytes[BUFCAP];
     int nbytes;
     unsigned char mutant[BUFCAP + 8];
@@ -478,6 +480,107 @@ static void gen_op(Op *o) {
     }
 }
 
+enum {
+    BAD_READ_REJECT,
+    BAD_READ_BITS,
+    BAD_READ_BITS64,
+    BAD_READ_INT,
+    BAD_READ_INT64,
+    BAD_READ_INT_REL,
+    BAD_READ_I128,
+    BAD_READ_FIXED32,
+    BAD_READ_FIXED64,
+    BAD_READ_FIXED128,
+    BAD_READ_CFLOAT,
+    BAD_READ_CFLOAT_PRE,
+    BAD_READ_STRING,
+    BAD_READ_KINDS
+};
+
+static const char *const bad_read_names[BAD_READ_KINDS] = {
+    "reject", "bits", "bits64", "int", "int64", "int_rel", "int128",
+    "fixed32", "fixed64", "fixed128", "cfloat", "cfloat_pre", "string"
+};
+static long cov_bad_read[BAD_READ_KINDS];
+static unsigned bad_read_seq;
+
+static void gen_bad_read_op(Op *o, int which) {
+    memset(o, 0, sizeof(*o));
+    o->bad_read = 1;
+    cov_bad_read[which]++;
+    switch (which) {
+    case BAD_READ_REJECT:
+        o->kind = OP_REJECT;
+        o->bad_read = 0;
+        break;
+    case BAD_READ_BITS:
+        o->kind = OP_BITS;
+        o->bits = 33;
+        break;
+    case BAD_READ_BITS64:
+        o->kind = OP_BITS64;
+        o->bits = 65;
+        break;
+    case BAD_READ_INT:
+        o->kind = OP_INT;
+        o->min = 5;
+        o->max = 4;
+        break;
+    case BAD_READ_INT64:
+        o->kind = OP_INT64;
+        o->min = 5;
+        o->max = 4;
+        break;
+    case BAD_READ_INT_REL:
+        o->kind = OP_INT_REL;
+        o->i1 = -1;
+        break;
+    case BAD_READ_I128:
+        o->kind = OP_I128;
+        o->min = 5;
+        o->max = 4;
+        break;
+    case BAD_READ_FIXED32:
+        o->kind = OP_FIXED32;
+        o->bits = 16;
+        o->frac = 16;
+        o->min = 0;
+        o->max = 40000;
+        break;
+    case BAD_READ_FIXED64:
+        o->kind = OP_FIXED64;
+        o->bits = 48;
+        o->frac = 16;
+        o->min = 0;
+        o->max = 1LL << 50;
+        break;
+    case BAD_READ_FIXED128:
+        o->kind = OP_FIXED128;
+        o->bits = 100;
+        o->frac = 40;
+        o->min = 0;
+        o->max = 1;
+        break;
+    case BAD_READ_CFLOAT:
+        o->kind = OP_CFLOAT;
+        o->f1 = 0.0f;
+        o->f2 = 1.0e38f;
+        o->f3 = 1.0e-38f;
+        break;
+    case BAD_READ_CFLOAT_PRE:
+        o->kind = OP_CFLOAT_PRE;
+        o->cmax = 1000;
+        o->cbits = 1;
+        o->cdelta = 1.0f;
+        o->f1 = 0.0f;
+        break;
+    case BAD_READ_STRING:
+        o->kind = OP_STRING;
+        o->bufsize = 0;
+        break;
+    }
+}
+
 static void gen_program(Program *p, int id) {
     memset(p, 0, sizeof(*p));
     p->id = id;
@@ -488,6 +591,14 @@ static void gen_program(Program *p, int id) {
     p->ops[p->nops].kind = OP_END;
     p->nops++;
     p->has_mutant = (rnd(4) == 0);
+    if (!p->has_mutant && (id % 8) == 0) {
+        unsigned seq = bad_read_seq++;
+        int which = (int)(seq % BAD_READ_KINDS);
+        int pos = (int)((seq / BAD_READ_KINDS) % (unsigned)p->nops);
+        memmove(&p->ops[pos + 1], &p->ops[pos], (size_t)(p->nops - pos) * sizeof(Op));
+        gen_bad_read_op(&p->ops[pos], which);
+        p->nops++;
+    }
 }
 
 /* ------------------------------------------------------------- writer --- */
@@ -541,6 +652,7 @@ static int write_program(Program *p, unsigned char *buf, int cap, int widen, int
     p->nranged = 0;
     for (int i = 0; i < p->nops; i++) {
         Op *o = &p->ops[i];
+        if (o->kind == OP_REJECT || o->bad_read) continue;
         int64_t bstart = serialize_write_bits_processed(&w);
         switch (o->kind) {
         case OP_BITS: serialize_write_bits(&w, (uint32_t)o->u, o->bits); break;
@@ -639,8 +751,8 @@ typedef struct {
     char reason[32];
     int64_t consumed;
     int terminal;
-    int ntok[MAXOPS + 1];
-    char tok[MAXOPS + 1][MAXTOK][TOKLEN];
+    int ntok[MAXOPS + 2];
+    char tok[MAXOPS + 2][MAXTOK][TOKLEN];
 } ReadResult;
 
 static void tok_u64(char *out, uint64_t v) { snprintf(out, TOKLEN, "%016" PRIx64, v); }
@@ -714,6 +826,7 @@ static int read_program(const unsigned char *bytes, int nbytes, Program *p, Read
         }
         case OP_ALIGN: ok = serialize_read_align(&rd); if (ok) r->ntok[i] = 0; break;
         case OP_END: ok = serialize_read_end(&rd); if (ok) r->ntok[i] = 0; break;
+        case OP_REJECT: ok = serialize_read_reject(&rd); if (ok) r->ntok[i] = 0; break;
         case OP_OBJECT: {
             int b = 0, iv = 0; uint16_t uv = 0;
             ok = serialize_read_bool(&rd, &b);
@@ -738,7 +851,7 @@ static int read_program(const unsigned char *bytes, int nbytes, Program *p, Read
             }
             return 1;
         }
-        if (o->kind != OP_ALIGN && o->kind != OP_END) {
+        if (o->kind != OP_ALIGN && o->kind != OP_END && o->kind != OP_REJECT) {
             r->ntok[i] = o->kind == OP_OBJECT ? 3 : 1;
         }
     }
@@ -758,6 +871,7 @@ static int64_t measure_program(Program *p) {
     serialize_measure_stream_init(&m);
     for (int i = 0; i < p->nops; i++) {
         Op *o = &p->ops[i];
+        if (o->kind == OP_REJECT || o->bad_read) continue;
         switch (o->kind) {
         case OP_BITS: serialize_measure_bits(&m, o->bits); break;
         case OP_BITS64: serialize_measure_bits64(&m, o->bits); break;
@@ -863,6 +977,7 @@ static void hex_encode(char *out, const unsigned char *p, int n) {
 
 
 static void write_op_line(FILE *f, const Op *o) {
+    if (o->bad_read) fprintf(f, "read ");
     switch (o->kind) {
     case OP_BITS: fprintf(f, "bits %d %" PRIu64 "\n", o->bits, o->u); break;
     case OP_BITS64: fprintf(f, "bits64 %d %016" PRIx64 "\n", o->bits, o->u); break;
@@ -905,6 +1020,7 @@ static void write_op_line(FILE *f, const Op *o) {
     }
     case OP_ALIGN: fprintf(f, "align\n"); break;
     case OP_END: fprintf(f, "end\n"); break;
+    case OP_REJECT: fprintf(f, "reject\n"); break;
     case OP_OBJECT: fprintf(f, "object\n"); break;
     }
 }
@@ -1021,7 +1137,7 @@ static int parse_out(const char *path, GooseOut *outs, int nprog, int base) {
             if (!ids || !src || !idx) { rc = -1; break; }
             int id = atoi(ids) - base;
             int i = atoi(idx);
-            if (id < 0 || id >= nprog || i < 0 || i > MAXOPS) { rc = -1; break; }
+            if (id < 0 || id >= nprog || i < 0 || i > MAXOPS + 1) { rc = -1; break; }
             ReadResult *r = (src[0] == 'c') ? &outs[id].c : &outs[id].m;
             int k = 0;
             char *tok;
@@ -1043,7 +1159,7 @@ static void print_program(FILE *f, Program *p, int widen) {
     fprintf(f, "program %d (%d ops)\n", p->id, p->nops);
     for (int i = 0; i < p->nops; i++) {
         /* write_op_line writes against a FILE; reuse via tmpfile-free approach */
-        fprintf(f, "  op %d ", i);
+        fprintf(f, "  op %d %s", i, p->ops[i].bad_read ? "read " : "");
         switch (p->ops[i].kind) {
         case OP_BITS: fprintf(f, "bits %d %" PRIu64, p->ops[i].bits, p->ops[i].u); break;
         case OP_BITS64: fprintf(f, "bits64 %d %016" PRIx64, p->ops[i].bits, p->ops[i].u); break;
@@ -1068,6 +1184,7 @@ static void print_program(FILE *f, Program *p, int widen) {
         case OP_STRING: { char hx[256]; hex_encode(hx, p->ops[i].buf, p->ops[i].len); fprintf(f, "string %d %s", p->ops[i].bufsize, hx); break; }
         case OP_ALIGN: fprintf(f, "align"); break;
         case OP_END: fprintf(f, "end"); break;
+        case OP_REJECT: fprintf(f, "reject"); break;
         case OP_OBJECT: fprintf(f, "object"); break;
         }
         fprintf(f, "\n");
@@ -1121,10 +1238,10 @@ static int compare_read(const char *what, Program *p, ReadResult *exp, ReadResul
 
 /* How many mutants the oracle refused, per reason: the PASS line prints them,
    so a run that stops reaching a rule shows it. */
-static int refused_by_reason[SERIALIZE_REFUSAL_NON_CANONICAL + 1];
+static int refused_by_reason[SERIALIZE_REFUSAL_REJECTED + 1];
 
 static void count_reason(const char *reason) {
-    for (int k = 1; k <= (int)SERIALIZE_REFUSAL_NON_CANONICAL; k++) {
+    for (int k = 1; k <= (int)SERIALIZE_REFUSAL_REJECTED; k++) {
         if (strcmp(reason, serialize_refusal_name((serialize_refusal_t)k)) == 0) refused_by_reason[k]++;
     }
 }
@@ -1225,6 +1342,7 @@ static int run_batch(const char *driver, const char *driver_opt, const char *tmp
         }
         ReadResult expc, expm;
         if (read_program(p->bytes, p->nbytes, p, &expc) != 1) { failed = 1; continue; }
+        if (!expc.accept) count_reason(expc.reason);
         if (!compare_read("own bytes", p, &expc, &lo->c, &failed)) {
             print_program(stderr, p, widen);
         }
@@ -1316,6 +1434,9 @@ int main(int argc, char **argv) {
         if (cov_edge_max_minus == 0) { printf("fixed coverage missing: raw value one step below raw_max\n"); missing = 1; }
         if (cov_edge_max == 0) { printf("fixed coverage missing: raw value at raw_max\n"); missing = 1; }
         if (cov_storage_extreme == 0) { printf("fixed coverage missing: raw value at a storage extreme\n"); missing = 1; }
+        for (int k = 0; k < BAD_READ_KINDS; k++) {
+            if (cov_bad_read[k] == 0) { printf("read-refusal coverage missing: %s\n", bad_read_names[k]); missing = 1; }
+        }
         if (missing) {
             printf("--- FAIL TestDifferentialAgainstSerializeC\n");
             return 1;
@@ -1337,7 +1458,7 @@ int main(int argc, char **argv) {
     remove(rmcmd);
     rmdir(tmpl);
     printf("--- PASS TestDifferentialAgainstSerializeC: seed 0x%016" PRIx64 ", %d programs, %d mutants (%d targeted at ranged offsets, float exponents and string bytes); mutants refused by reason:", seed, total, mutant_count, targeted_count);
-    for (int k = 1; k <= (int)SERIALIZE_REFUSAL_NON_CANONICAL; k++) {
+    for (int k = 1; k <= (int)SERIALIZE_REFUSAL_REJECTED; k++) {
         if (refused_by_reason[k] > 0) printf(" %s %d", serialize_refusal_name((serialize_refusal_t)k), refused_by_reason[k]);
     }
     printf("\n");
