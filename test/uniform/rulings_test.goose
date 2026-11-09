@@ -265,3 +265,27 @@ fn TestU15CopyStringResultIsWritable() {
     var w = serialize_write_stream_init(buf);
     assert(serialize_string(w, dest[0..n], 4));
 }
+
+// ---- U7: extreme declarations on read refuse, never overflow ---------------
+
+// Run with debug checks, where signed overflow traps: the declaration is
+// bounded before any arithmetic on it.
+// goose: --debug
+fn TestU7StringReadMinBufferSizeRefuses() {
+    var data: u8[16] = [0; 16];
+    var r = serialize_read_stream_init(data, 8);
+    var out: u8[>..] = [];
+    assert(!serialize_string(r, out, -9223372036854775807 - 1));
+    assert(serialize_error(r) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+    assert(serialize_bits_processed(r) == 0);
+}
+
+// goose: --debug
+fn TestU7Fixed64ReadMaxIntegerBitsRefuses() {
+    var data: u8[16] = [0; 16];
+    var r = serialize_read_stream_init(data, 8);
+    var v: i64 = 0;
+    assert(!serialize_fixed64(r, v, 9223372036854775807, 1, 0, 1));
+    assert(serialize_error(r) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+    assert(serialize_bits_processed(r) == 0);
+}
