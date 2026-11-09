@@ -54,6 +54,7 @@ src/serialize_float.goose	60	guard serialize_float_bits_are_finite(bits) else	va
 src/serialize_compressed_float.goose	139	guard serialize_float_bits_are_finite(serialize_f32_bits(decoded)) else {	value = decoded; guard serialize_float_bits_are_finite(serialize_f32_bits(decoded)) else {	compressed-float-destination-unwritten (Reader Obligations)
 src/serialize_bytes.goose	177	guard length <= serialize_bits_remaining(s) / 8	guard true	string-length-checked-before-payload (string; Reader Obligations)
 src/serialize_stream.goose	90	if bytes < 0 || data.len - 8 < bytes	if false	read-init-misuse-refused (U7)
+src/serialize_stream.goose	102	SERIALIZE_ERROR_VALUE_OUT_OF_RANGE	SERIALIZE_ERROR_PAST_END	padded-init-reason-value_out_of_range (Refusal reasons)
 src/serialize_stream.goose	131	if kind < SERIALIZE_ERROR_PAST_END || kind > SERIALIZE_ERROR_REJECTED	if false	fail-outside-the-list-records-rejected (U14)
 src/serialize_stream.goose	357	{ return true; }	{ return false; }	end-on-write-is-true (U12)
 src/serialize_object.goose	29	SERIALIZE_ERROR_REJECTED	SERIALIZE_ERROR_VALUE_OUT_OF_RANGE	object-callback-refusal-latches-rejected (U2)
