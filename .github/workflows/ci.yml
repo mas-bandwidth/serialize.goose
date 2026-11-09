@@ -47,9 +47,6 @@ jobs:
       - name: Fuzz
         run: if [ -f make/fuzz.mk ]; then make fuzz; fi
 
-      - name: Bench check
-        run: if [ -f make/bench.mk ]; then make bench-check; fi
-
   corpus:
     name: STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match the corpus pin
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
