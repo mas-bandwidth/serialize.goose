@@ -136,7 +136,7 @@ fn TestSmoke() {
     // A padded init whose destination cannot hold bytes + 8 starts latched.
     var small: u8[8] = [0; 8];
     var refused = serialize_read_stream_init_padded(small, buffer[0..1]);
-    assert(serialize_error(refused) == SERIALIZE_ERROR_PAST_END);
+    assert(serialize_error(refused) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
     var w8: u8 = 3;
     assert(!serialize_uint8(refused, w8));
     assert(w8 == 3);
