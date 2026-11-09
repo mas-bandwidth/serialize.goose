@@ -135,7 +135,7 @@ fuzz: fuzz-host fuzz-driver fuzz-driver-opt
 		'serialize_int.goose|if offset > (max as! u32) - (min as! u32)' \
 		'serialize_int.goose|if offset > (max as! u64) - (min as! u64)' \
 		'serialize_int128.goose|if serialize_u128_compare(offset, span) > 0' \
-		'serialize_fixed.goose|if fixed_u128_compare(offset, span) > 0'; do \
+		'serialize_fixed.goose|if serialize_fixed_u128_compare(offset, span) > 0'; do \
 		f=$${pair%%|*}; needle=$${pair#*|}; \
 		grep -qF "$$needle" $$f || { echo "reader range control: the needle '$$needle' no longer matches $$f"; exit 1; }; \
 		awk -v n="$$needle" '{ i = index($$0, n); while (i > 0) { $$0 = substr($$0, 1, i - 1) "if false" substr($$0, i + length(n)); i = index($$0, n) } print }' $$f >$$f.tmp && mv $$f.tmp $$f; \
