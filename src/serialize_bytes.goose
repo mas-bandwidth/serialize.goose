@@ -3,7 +3,7 @@
 // UTF-8. Strings are Goose's own: UTF-8
 // bytes. Writes take a const u8[:]; a string read takes any u8 builder
 // (u8[>..] or u8[..k]) by reference, cleared and filled only on success.
-// Card serialize-goose-strings fills this file.
+// The bytes and string implementation fills this file.
 
 import .serialize_stream;
 import .serialize_bitpacker;
@@ -11,7 +11,7 @@ import .serialize_bitpacker;
 // ---- length field (STANDARD.md, string, step 1) ---------------------------
 //
 // The length is serialize_int(length, 0, buffer_size - 1). The ranged-int
-// card's entry point is not in this checkout yet, so the two arms below do the
+// family's entry point is not in this checkout yet, so the two arms below do the
 // same arithmetic for min == 0: serialization is the offset in
 // bits_required(0, max) bits, LSB-first, and 0 when max == 0 (STANDARD.md,
 // int). They are byte-for-byte serialize_int's (DESIGN.md (a)).
@@ -72,21 +72,21 @@ fn serialize_valid_utf8(data: const u8[:]) -> bool {
             i += 2;
         } else if (lead & 0xF0) == 0xE0 {
             if i + 2 >= data.len { return false; }
-            let b1 = data[i + 1];
+            let byte1 = data[i + 1];
             let b2 = data[i + 2];
-            if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 { return false; }
-            if lead == 0xE0 && b1 < 0xA0 { return false; }
-            if lead == 0xED && b1 >= 0xA0 { return false; }
+            if (byte1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 { return false; }
+            if lead == 0xE0 && byte1 < 0xA0 { return false; }
+            if lead == 0xED && byte1 >= 0xA0 { return false; }
             i += 3;
         } else if (lead & 0xF8) == 0xF0 {
             if lead > 0xF4 { return false; }
             if i + 3 >= data.len { return false; }
-            let b1 = data[i + 1];
+            let byte1 = data[i + 1];
             let b2 = data[i + 2];
             let b3 = data[i + 3];
-            if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80 { return false; }
-            if lead == 0xF0 && b1 < 0x90 { return false; }
-            if lead == 0xF4 && b1 >= 0x90 { return false; }
+            if (byte1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80 { return false; }
+            if lead == 0xF0 && byte1 < 0x90 { return false; }
+            if lead == 0xF4 && byte1 >= 0x90 { return false; }
             i += 4;
         } else {
             return false;
@@ -160,7 +160,7 @@ fn serialize_string<T>(s: ReadStream&, value: T&, buffer_size: i64) -> bool {
     guard serialize_error(s) == SERIALIZE_ERROR_NONE else { return false; }
     // A destination that cannot hold buffer_size - 1 bytes is the caller's
     // bad declaration, refused before any bit moves whatever the wire holds:
-    // never a capacity trap the wire chooses (U16; audit ledger H, 2026-10-27).
+    // never a capacity trap the wire chooses (U16, 2026-10-27).
     guard buffer_size - 1 <= serialize_string_capacity(value) else {
         return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
     }

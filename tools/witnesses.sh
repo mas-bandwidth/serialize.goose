@@ -16,7 +16,7 @@ set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 GOOSE=${GOOSE:-$root/dist/goose-v2026.2-linux-x64/goose}
 export GOOSE
-JOBS=${JOBS:-4}  # shared benches: rocketnet has first claim
+JOBS=${JOBS:-4}  # number of parallel jobs
 
 # file<TAB>line<TAB>from<TAB>to<TAB>rule (STANDARD.md section)
 table() {
@@ -63,7 +63,7 @@ src/serialize_compressed_float.goose	36	max_integer_value <= CF_MAX_INTEGER_VALU
 src/serialize_bytes.goose	104	serialize_write_check(s, serialize_align_bits(s) + data.len * 8);	serialize_align(s); serialize_write_check(s, data.len * 8);	bytes-write-room-whole (U10)
 src/serialize_bytes.goose	147	serialize_write_check(s, length_bits + align + value.len * 8);	if false { serialize_write_check(s, length_bits + align + value.len * 8); }	string-write-room-whole (U10)
 src/serialize_int.goose	105	serialize_write_check(s, serialize_int_relative_bits(difference));	if false { serialize_write_check(s, serialize_int_relative_bits(difference)); }	int-relative-write-room-whole (U10)
-src/serialize_bytes.goose	164	guard buffer_size - 1 <= serialize_string_capacity(value) else	guard true else	string-read-capacity-checked (U16; ledger H)
+src/serialize_bytes.goose	164	guard buffer_size - 1 <= serialize_string_capacity(value) else	guard true else	string-read-capacity-checked (U16)
 src/serialize_bytes.goose	193	serialize_string_check(value, buffer_size);	if false { serialize_string_check(value, buffer_size); }	measure-string-checked (U3)
 src/serialize_stream.goose	178	if bits > s.num_bits - s.bits_written	if false	write-past-end-aborts (U9)
 src/serialize_stream.goose	139	{ return false; }	{ return true; }	fail-on-write-returns-false (U9)

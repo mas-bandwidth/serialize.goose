@@ -144,7 +144,7 @@ fn serialize_compressed_float_precomputed(s: ReadStream&, value: f32&, max_integ
 }
 
 // The measure makes every check the writer makes (U6), so a mismatched
-// declaration never measures short (audit ledger L, 2026-10-27) and a
+// declaration never measures short (2026-10-27) and a
 // non-finite value aborts there too.
 fn serialize_compressed_float_precomputed(s: MeasureStream&, value: f32, max_integer_value: u32, bits: i64, delta: f32, min: f32) -> bool {
     cf_check_write(value, max_integer_value, bits, delta, min);
