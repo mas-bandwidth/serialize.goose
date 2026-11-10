@@ -57,7 +57,7 @@ fn serialize_int128_add(a: Int128, b: Int128) -> Int128 {
     return Int128 { lo: r.lo, hi: r.hi };
 }
 
-// Left shift in the unsigned lane domain, with no full-width lane shifts.
+// Left shift in the unsigned lane domain, with no full-width shifts; fixed raw bounds reuse it.
 fn serialize_u128_shl(value: Uint128, bits: i64) -> Uint128 {
     if bits <= 0 { return value; }
     if bits >= 128 { return Uint128 { lo: 0, hi: 0 }; }
@@ -107,7 +107,7 @@ fn serialize_u128_write_bits(s: WriteStream&, value: Uint128, bits: i64) {
         var chunk = bits - written;
         if chunk > 32 { chunk = 32; }
         let g: u64 = serialize_u128_group32(value, group);
-        let mask: u64 = ((1 as u64) << (chunk as u64)) - 1;
+        let mask: u64 = ((1 as u64) << (chunk as u64)) - 1; // chunk <= 32, so no 64-bit full mask
         serialize_packer_write(s, g & mask, chunk);
         written += chunk;
         group += 1;

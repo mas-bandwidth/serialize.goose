@@ -10,7 +10,7 @@ import .serialize_int128;
 
 // ---- 128-bit unsigned arithmetic over the Int128 lanes ---------------------
 // STANDARD.md, fixed: the raw range lives in the unsigned domain of the
-// storage width, exactly as int128's bounds do.
+// storage width, exactly as int128's bounds do, through shared u128 helpers.
 
 fn serialize_fixed_u128_from_i64(value: i64) -> Int128 {
     return serialize_int128_from_int64(value);
@@ -37,7 +37,7 @@ fn serialize_fixed_u128_bit_length(value: Int128) -> i64 {
     return serialize_u128_bit_length(Uint128 { lo: value.lo, hi: value.hi });
 }
 
-// min << fraction_bits in the 128-bit domain (serialize.c serialize_raw_bound).
+// min << fraction_bits in the 128-bit domain via the shared lane shift (serialize.c serialize_raw_bound).
 fn serialize_fixed_raw_bound(whole: i64, fraction_bits: i64) -> Int128 {
     let u = serialize_fixed_u128_from_i64(whole);
     let shifted = serialize_u128_shl(Uint128 { lo: u.lo, hi: u.hi }, fraction_bits);
