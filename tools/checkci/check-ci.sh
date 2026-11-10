@@ -47,6 +47,34 @@ runs_make() {
 		grep -vE '^[0-9]+:[[:space:]]*#' >/dev/null
 }
 
+# scan_job_mix FILE names the line that completes a job containing both test
+# and witnesses. Jobs begin at the workflow's two-space indentation.
+scan_job_mix() {
+	awk '
+		function scan(line) {
+			if (line ~ /(^|[;&|[:space:]])make[[:space:]]+test([[:space:]]|;|$)/) test_line=NR
+			if (line ~ /(^|[;&|[:space:]])make[[:space:]]+witnesses([[:space:]]|;|$)/) witness_line=NR
+			if (test_line && witness_line) { print FILENAME ":" (test_line > witness_line ? test_line : witness_line); test_line=0; witness_line=0 }
+		}
+		/^  [A-Za-z0-9_-]+:/ { test_line=0; witness_line=0; in_run=0; run_indent=0 }
+		{
+			if ($0 ~ /^[[:space:]]*(#|$)/) next
+			indent=match($0, /[^ ]/) - 1
+			if (in_run && indent <= run_indent) in_run=0
+			if ($0 ~ /^[[:space:]]*run:/) {
+				in_run=1; run_indent=indent
+				line=$0; sub(/^[[:space:]]*run:[[:space:]]*/, "", line)
+				if (line !~ /^[|>][-+]?$/) scan(line)
+			} else if (in_run) scan($0)
+		}
+	' "$1"
+}
+
+check_job_default() {
+	file=$1
+	grep -nE '(^|[[:space:]])JOBS=([0-9]+|\$\{JOBS:(-|=)[0-9]+\})([[:space:];]|$)|([[:space:]:{])\$\{JOBS:(-|=)[0-9]+\}' "$file" | sed "s|^|$file:|"
+}
+
 # a_tag LINE extracts the first vX.Y.Z from a FILE:LINE record, or empty.
 a_tag() {
 	printf '%s\n' "$1" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1
@@ -79,6 +107,11 @@ EOF_PIN
 	for target in dist-goose test; do
 		runs_make "$target_ci" "$target" || fail "$target_ci:1: ci.yml does not run 'make $target'"
 	done
+	while IFS= read -r mixed; do
+		[ -n "$mixed" ] && fail "$mixed: one CI job runs both 'make test' and 'make witnesses'"
+	done <<EOF_MIX
+$(scan_job_mix "$target_ci")
+EOF_MIX
 
 	ci_line=$(grep -nE '^[[:space:]]*SERIALIZE_TAG:' "$target_ci" | head -1)
 	ci_lineno=$(printf '%s\n' "$ci_line" | cut -d: -f1)
@@ -99,6 +132,12 @@ EOF_PIN
 printf 'RUN TestCheckCI\n'
 
 check_file "$ci"
+while IFS= read -r fixed_default; do [ -n "$fixed_default" ] && fail "$fixed_default: JOBS must default to the available core count"; done <<EOF_WITNESS_DEFAULT
+$(check_job_default "$root/tools/witnesses.sh")
+EOF_WITNESS_DEFAULT
+while IFS= read -r fixed_default; do [ -n "$fixed_default" ] && fail "$fixed_default: JOBS must default to the available core count"; done <<EOF_CONTROLS_DEFAULT
+$(check_job_default "$root/tools/controls.sh")
+EOF_CONTROLS_DEFAULT
 
 # Every other workflow: the fleet runner and the Makefile pin, as ci.yml.
 if [ $# -eq 0 ]; then
@@ -137,6 +176,38 @@ if [ $# -eq 0 ] && [ "$bad" -eq 0 ]; then
 		else
 			printf 'control: scratch ci.yml with a pasted sha256 failed as required:\n'
 			sed 's/^/  /' "$ctl/pin.out"
+		fi
+
+		awk '{ print; if (!inserted && /run:[[:space:]]*make test/) { print "      - name: Fold witnesses into test job"; print "        run: |"; print "          echo check"; print "          make witnesses"; inserted=1 } }' "$ci" >"$ctl/ci-mixed.yml"
+		if sh "$0" "$ctl/ci-mixed.yml" >"$ctl/mixed.out" 2>&1; then
+			fail "control: a scratch ci.yml with witnesses folded into the test job passed; it must fail"
+		else
+			printf 'control: scratch ci.yml with witnesses folded into test failed as required:\n'
+			sed 's/^/  /' "$ctl/mixed.out"
+		fi
+
+		awk 'BEGIN { print "JOBS=${JOBS:-4}" } { print }' "$root/tools/witnesses.sh" >"$ctl/witnesses-fixed-jobs.sh"
+		if [ -z "$(check_job_default "$ctl/witnesses-fixed-jobs.sh")" ]; then
+			fail "control: a scratch witnesses.sh with JOBS=4 passed; it must fail"
+		else
+			printf 'control: scratch witnesses.sh with JOBS=4 failed as required:\n'
+			check_job_default "$ctl/witnesses-fixed-jobs.sh" | sed 's/^/  /'
+		fi
+
+		awk '{ if ($0 ~ /JOBS=\$\(nproc/) { sub(/then JOBS=.*/, "then JOBS=4; fi") } print }' "$root/tools/witnesses.sh" >"$ctl/witnesses-jobs-default.sh"
+		if [ -z "$(check_job_default "$ctl/witnesses-jobs-default.sh")" ]; then
+			fail "control: a scratch witnesses.sh with 'then JOBS=4; fi' passed; it must fail"
+		else
+			printf 'control: scratch witnesses.sh with a fixed JOBS=4 default failed as required:\n'
+			check_job_default "$ctl/witnesses-jobs-default.sh" | sed 's/^/  /'
+		fi
+
+		awk 'BEGIN { print ": ${JOBS:=4}" } { print }' "$root/tools/controls.sh" >"$ctl/controls-jobs-default.sh"
+		if [ -z "$(check_job_default "$ctl/controls-jobs-default.sh")" ]; then
+			fail "control: a scratch controls.sh with ': ${JOBS:=4}' passed; it must fail"
+		else
+			printf 'control: scratch controls.sh with : ${JOBS:=4} failed as required:\n'
+			check_job_default "$ctl/controls-jobs-default.sh" | sed 's/^/  /'
 		fi
 
 		rm -rf "$ctl"
