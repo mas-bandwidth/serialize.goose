@@ -17,20 +17,20 @@ fn serialize_fixed_u128_from_i64(value: i64) -> Int128 {
 }
 
 fn serialize_fixed_u128_sub(a: Int128, b: Int128) -> Int128 {
-    return serialize_int128_sub(a, b);
+    let r = serialize_u128_sub(Uint128 { lo: a.lo, hi: a.hi }, Uint128 { lo: b.lo, hi: b.hi });
+    return Int128 { lo: r.lo, hi: r.hi };
 }
 
 fn serialize_fixed_u128_add(a: Int128, b: Int128) -> Int128 {
-    return serialize_int128_add(a, b);
+    let r = serialize_u128_add(Uint128 { lo: a.lo, hi: a.hi }, Uint128 { lo: b.lo, hi: b.hi });
+    return Int128 { lo: r.lo, hi: r.hi };
 }
 
 fn serialize_fixed_u128_compare(a: Int128, b: Int128) -> i64 {
     // These lanes hold unsigned offsets and spans, even for signed Q formats.
-    return serialize_u128_compare(Uint128 { lo: a.lo, hi: a.hi }, Uint128 { lo: b.lo, hi: b.hi });
-}
-
-fn serialize_fixed_bit_length64(value: u64) -> i64 {
-    return serialize_u128_bit_length(Uint128 { lo: value, hi: 0 });
+    let ua = Uint128 { lo: a.lo, hi: a.hi };
+    let ub = Uint128 { lo: b.lo, hi: b.hi };
+    return serialize_u128_compare(ua, ub);
 }
 
 fn serialize_fixed_u128_bit_length(value: Int128) -> i64 {
