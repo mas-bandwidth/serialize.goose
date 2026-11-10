@@ -1201,7 +1201,14 @@ fn conf_run_record(rec: Rec&, sabotage: i64, tally: Tally&) -> bool {
         }
         serialize_flush(w);
         guard serialize_bytes_processed(w) == rec.wire_len else { return conf_fail(rec, tally, "the writer wrote a different byte count"); }
-        guard serialize_bits_processed(w) <= rec.consumed else { return conf_fail(rec, tally, "the writer wrote more bits than were read"); }
+        // Without a final end the writer's bit count is exactly the reader's;
+        // with one, the reader also consumed the padding up to the byte.
+        let wbits = serialize_bits_processed(w);
+        if rec.step_count > 0 && rec.steps[rec.step_count - 1].kind == K_END {
+            guard (wbits + 7) / 8 * 8 == rec.consumed else { return conf_fail(rec, tally, "the writer wrote a different bit count"); }
+        } else {
+            guard wbits == rec.consumed else { return conf_fail(rec, tally, "the writer wrote a different bit count"); }
+        }
         for i in rec.wire_len {
             guard wbuf[i] == rec.wire[i] else { return conf_fail(rec, tally, "the writer wrote different bytes"); }
         }

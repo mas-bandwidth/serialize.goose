@@ -99,7 +99,7 @@ fn serialize_read_stream_init(data: const u8[:], bytes: i64) -> ReadStream {
 // that cannot hold data.len + 8 copies nothing and the stream starts latched.
 fn serialize_read_stream_init_padded(destination: u8[:], data: const u8[:]) -> ReadStream {
     if destination.len - 8 < data.len {
-        return ReadStream { data: destination[0..0], num_bits: 0, bits_read: 0, error: SERIALIZE_ERROR_PAST_END };
+        return ReadStream { data: destination[0..0], num_bits: 0, bits_read: 0, error: SERIALIZE_ERROR_VALUE_OUT_OF_RANGE };
     }
     for i in data.len { destination[i] = data[i]; }
     for i in 8 { destination[data.len + i] = 0; }

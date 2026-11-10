@@ -5,6 +5,17 @@
 
 import .serialize;
 
+// Consumer helpers share the program's global namespace with imported code.
+let CF_MAX_INTEGER_VALUE: u32 = 17;
+fn cf_bits_required(max: u32) -> i64 { return 101; }
+fn fixed_format_ok(integer_bits: i64, fraction_bits: i64, width: i64) -> bool { return false; }
+
+fn TestSmokeConsumerHelpers() {
+    assert(CF_MAX_INTEGER_VALUE == 17);
+    assert(cf_bits_required(7) == 101);
+    assert(!fixed_format_ok(16, 16, 32));
+}
+
 // A caller's own type, for serialize_object: one generic serialize function
 // over every stream, the C++ model (DESIGN.md (a), object).
 struct SmokePair { a: i32, b: i32 }
@@ -136,7 +147,7 @@ fn TestSmoke() {
     // A padded init whose destination cannot hold bytes + 8 starts latched.
     var small: u8[8] = [0; 8];
     var refused = serialize_read_stream_init_padded(small, buffer[0..1]);
-    assert(serialize_error(refused) == SERIALIZE_ERROR_PAST_END);
+    assert(serialize_error(refused) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
     var w8: u8 = 3;
     assert(!serialize_uint8(refused, w8));
     assert(w8 == 3);
