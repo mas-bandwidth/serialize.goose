@@ -167,7 +167,7 @@ fn serialize_string<T>(s: ReadStream&, value: T&, buffer_size: i64) -> bool {
     // A destination that cannot hold buffer_size - 1 bytes is the caller's
     // bad declaration, refused before any bit moves whatever the wire holds:
     // never a capacity trap the wire chooses (U16; audit ledger H, 2026-10-27).
-    guard buffer_size - 1 <= serialize_string_capacity(value) else {
+    guard buffer_size >= 1 && buffer_size - 1 <= serialize_string_capacity(value) else {
         return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
     }
     var length: i64 = 0;

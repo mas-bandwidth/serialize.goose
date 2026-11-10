@@ -111,6 +111,7 @@ fn serialize_fixed_read_bits(s: ReadStream&, value: Int128&, bits: i64) -> bool 
 // (STANDARD.md, fixed), fixed64 and fixed128 their own width.
 fn serialize_fixed_format_ok(integer_bits: i64, fraction_bits: i64, width: i64) -> bool {
     if integer_bits < 1 || fraction_bits < 0 { return false; }
+    if integer_bits > width || fraction_bits > width { return false; }
     let total = integer_bits + fraction_bits;
     if width == 32 { return total == 8 || total == 16 || total == 32; }
     return total == width;
