@@ -79,7 +79,7 @@ src/serialize_compressed_float.goose	31	max_integer_value <= serialize_CF_MAX_IN
 src/serialize_bytes.goose	102	serialize_write_check(s, serialize_align_bits(s) + data.len * 8);	serialize_align(s); serialize_write_check(s, data.len * 8);	bytes-write-room-whole (U10)
 src/serialize_bytes.goose	146	serialize_write_check(s, length_bits + align + value.len * 8);	if false { serialize_write_check(s, length_bits + align + value.len * 8); }	string-write-room-whole (U10)
 src/serialize_int.goose	105	serialize_write_check(s, serialize_int_relative_bits(difference));	if false { serialize_write_check(s, serialize_int_relative_bits(difference)); }	int-relative-write-room-whole (U10)
-src/serialize_bytes.goose	166	guard buffer_size - 1 <= serialize_string_capacity(value) else	guard true else	string-read-capacity-checked (U16; ledger H)
+src/serialize_bytes.goose	166	buffer_size - 1 <= serialize_string_capacity(value)	true	string-read-capacity-checked (U16; ledger H)
 src/serialize_bytes.goose	195	serialize_string_check(value, buffer_size);	if false { serialize_string_check(value, buffer_size); }	measure-string-checked (U3)
 src/serialize_stream.goose	178	if bits > s.num_bits - s.bits_written	if false	write-past-end-aborts (U9)
 src/serialize_stream.goose	139	{ return false; }	{ return true; }	fail-on-write-returns-false (U9)
