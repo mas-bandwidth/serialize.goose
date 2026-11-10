@@ -224,6 +224,66 @@ fn TestU9FailOnWriteAndMeasureNeverAborts() {
 // (TestU10StringWritePastEndAbortsOnTheWholeOperation and its siblings in
 // rulings_test.goose).
 
+// ---- U11: flush ends the write --------------------------------------------
+
+// A write after a flush that stored a partial word is write misuse: its bits
+// would land past the bytes the writer reports. It aborts on the bit path...
+// want-abort: serialize: write after a flush that stored a partial word
+fn TestU11BitsAfterPartialFlushAborts() {
+    var buf: u8[8] = [0; 8];
+    var w = serialize_write_stream_init(buf);
+    assert(serialize_bits(w, 0xAB, 8));
+    serialize_flush(w);
+    serialize_bits(w, 0xCD, 8);
+}
+
+// ...and on the byte path, here with the cursor already aligned.
+// want-abort: serialize: write after a flush that stored a partial word
+fn TestU11BytesAfterPartialFlushAborts() {
+    var buf: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(buf);
+    assert(serialize_bits(w, 0xAB, 8));
+    serialize_flush(w);
+    let payload: u8[1] = [0xCD];
+    serialize_bytes(w, payload);
+}
+
+// ...and on an empty bytes write at an aligned cursor, which moves no bit...
+// want-abort: serialize: write after a flush that stored a partial word
+fn TestU11EmptyBytesAfterPartialFlushAborts() {
+    var buf: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(buf);
+    assert(serialize_bits(w, 0xAB, 8));
+    serialize_flush(w);
+    let payload: u8[0] = [];
+    serialize_bytes(w, payload);
+}
+
+// ...and on an empty string whose length field has no bits (buffer_size 1).
+// want-abort: serialize: write after a flush that stored a partial word
+fn TestU11EmptyStringAfterPartialFlushAborts() {
+    var buf: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(buf);
+    assert(serialize_bits(w, 0xAB, 8));
+    serialize_flush(w);
+    let text: u8[0] = [];
+    serialize_string(w, text, 1);
+}
+
+// A flush that stored nothing (the cursor on a word boundary) ends nothing:
+// the next write starts the next word.
+fn TestU11WriteAfterWholeWordFlushContinues() {
+    var buf: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(buf);
+    serialize_flush(w);
+    assert(serialize_uint64(w, 0x8899AABBCCDDEEFF));
+    serialize_flush(w);
+    assert(serialize_bits(w, 0xCD, 8));
+    serialize_flush(w);
+    assert(serialize_bits_processed(w) == 72);
+    assert(buf[0] == 0xFF && buf[7] == 0x88 && buf[8] == 0xCD);
+}
+
 // ---- U12: end on a write or a measure is a no-op returning true ------------
 
 fn TestU12EndOnWriteAndMeasureIsTrue() {

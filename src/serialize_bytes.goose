@@ -82,8 +82,10 @@ fn serialize_valid_utf8(data: const u8[:]) -> bool {
 
 // Aligns FIRST, then the count raw bytes, which are not transmitted. The
 // writer checks room for the align and the payload together before writing
-// either, and aborts when they do not fit (U9, U10).
+// either, and aborts when they do not fit (U9, U10). After a flush that
+// stored a partial word it aborts even when it would move no bit (U11).
 fn serialize_bytes(s: WriteStream&, data: const u8[:]) -> bool {
+    if s.flushed_partial { abort("serialize: write after a flush that stored a partial word"); }
     serialize_write_check(s, serialize_align_bits(s) + data.len * 8);
     serialize_align(s);
     serialize_packer_write_bytes(s, data);

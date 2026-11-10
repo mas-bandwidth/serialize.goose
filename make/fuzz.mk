@@ -1,8 +1,8 @@
-# make/fuzz.mk -- the fuzz differential against serialize.c v2.0.0 (DESIGN.md,
+# make/fuzz.mk -- the fuzz differential against serialize.c at FUZZ_REF_TAG (DESIGN.md,
 # "The reference"; STANDARD.md, the reference oracle). A functional test: it
 # builds programs and spawns processes, so it lives here and not in make test.
 #
-# make fuzz            the CI smoke: fuzz/host.c (serialize.c v2.0.0 from
+# make fuzz            the CI smoke: fuzz/host.c (serialize.c FUZZ_REF_TAG from
 #                      .ref/, header-only) generates 2000 programs from its
 #                      FIXED seed and drives fuzz/fuzz_driver.goose, built
 #                      twice over a staged copy of src/ (goose build --debug
@@ -54,8 +54,8 @@
 # An optimized build that fails is a hard failure naming the platform
 # blocker, never a skip: optimized parity is either proven or reported.
 
-FUZZ_REF_TAG    := v2.1.1
-FUZZ_REF_COMMIT := 1d072f62e72ed357c094a7f52b29327ed8cdd862
+FUZZ_REF_TAG    := v2.1.2
+FUZZ_REF_COMMIT := db892f4ca576624817fc26bcbe2c7f2e66e367ac
 FUZZ_REF        := $(CURDIR)/.ref/serialize.c-$(FUZZ_REF_TAG)
 FUZZ_BUILD      := $(CURDIR)/build/fuzz
 FUZZ_HOST       := $(FUZZ_BUILD)/host

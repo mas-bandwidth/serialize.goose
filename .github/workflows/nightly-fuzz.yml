@@ -1,7 +1,7 @@
 name: nightly fuzz
 
 # A functional test, nightly: the fuzz differential against serialize.c
-# v2.0.0 (make/fuzz.mk, fuzz/host.c, fuzz/fuzz_driver.goose) with time to
+# at FUZZ_REF_TAG (make/fuzz.mk, fuzz/host.c, fuzz/fuzz_driver.goose) with time to
 # explore. ci.yml's `make fuzz` is the smoke: 2000 programs from the FIXED
 # seed plus the three negative controls. This job runs the same smoke and
 # controls, then `make fuzz-extended` for `duration` seconds from a seed that

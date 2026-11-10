@@ -13,8 +13,9 @@ import .serialize_compressed_float;
 import .serialize_bytes;
 import .serialize_object;
 
-// The library version (semantic versioning, like the sibling serialize ports).
-let SERIALIZE_VERSION = "2.1.2";
+// This port's release, the tag the tree is released as (semantic versioning,
+// like the sibling serialize ports); not the vendored standard's version.
+let SERIALIZE_VERSION = "2.1.3";
 
 // The wire format this library writes and reads (STANDARD.md, Format version).
 let SERIALIZE_FORMAT_VERSION = "2.0";

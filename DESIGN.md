@@ -5,8 +5,8 @@ serialize.goose ports serialize, the open-source bitpacking serializer, to
 schema's Goose leg. This page fixes every decision; each family of files after
 it fills one set and decides nothing. Sections (a) to (g) are the contract.
 
-**The reference.** serialize v2.1.3
-(`7bf1877b38cfdd737d0bf102a546ec2674335786`), format 2.0, is matched byte for
+**The reference.** serialize v2.1.4
+(`65e43ca1fef11362300f2ca569a7177c2718f20a`), format 2.0, is matched byte for
 byte and refusal for refusal, reason for reason. (Format 1.1 was matched
 against serialize.c v1.11.2, `7303fa47cada102af10c396c6dd5aa1f0e99f2ab`.) serialize.luau
 (`e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
@@ -14,9 +14,11 @@ supplied the shape of this page. Both are read, never imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`,
 `conformance/*.txt` and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.3
-(`7bf1877b38cfdd737d0bf102a546ec2674335786`, 2026-10-29, the 2.1.3 release;
-2.1.1 merged the 2.1.1 rulings), format 2.0 still. 2.1.1 changed IMPLEMENTING.md only: one
+VERBATIM from mas-bandwidth/serialize at tag v2.1.4
+(`65e43ca1fef11362300f2ca569a7177c2718f20a`, 2026-11-10, the 2.1.4 release;
+2.1.1 merged the 2.1.1 rulings), format 2.0 still. 2.1.4 changed IMPLEMENTING.md
+only: a bytes read with no destination (U7), a write after a flush (U11), and a
+destination's capacity (U16). 2.1.1 changed IMPLEMENTING.md only: one
 write-misuse mechanism, the trap (U9), a measure making every write check
 (U6), lone surrogates as write misuse (U3), the copy_string back-off and the
 exports ruling (U15); the corpus and STANDARD.md are 2.1.0's. 2.1
@@ -114,7 +116,8 @@ UTF-8 sequence and `serialize_string` with `buffer_size = dest.len` accepts
 it. The rule is on bytes, ill-formed source included. A `dest` of no bytes is
 write misuse and aborts (U9). Flush is
 required: a write buffer's contents are unspecified until `serialize_flush`
-(U11). A stream is re-initialized by assigning it a fresh init, which clears
+(U11), and a write after a flush that stored a partial word aborts (U11, U9).
+A stream is re-initialized by assigning it a fresh init, which clears
 its latch (U13).
 
 ### The latched kinds
@@ -488,7 +491,7 @@ Measured at the pin, 2026-10-19:
 ## (e) WRITER AND READER
 
 **The writer is STRICT.** For every value it emits exactly the bytes
-the serialize v2.1.3 standard specifies, byte for byte. Every write misuse
+the serialize v2.1.4 standard specifies, byte for byte. Every write misuse
 the reference asserts on aborts naming the rule (a), a value outside [min,max], a
 non-finite float and a full buffer included: one mechanism, the trap (U9).
 The room check covers the whole operation's width, a string's length, align
@@ -656,8 +659,8 @@ checked puts each in its own `if` (test/smoke does).
   fuzz separate parallel jobs on the same serialize fleet runners. Each job
   fetches its own pinned Goose toolchain. The corpus-pin job remains separate.
 - `make fuzz` (make/fuzz.mk; a functional test, in CI after the controls):
-  the differential against serialize.c v2.1.1
-  (`1d072f62e72ed357c094a7f52b29327ed8cdd862`, pinned in make/fuzz.mk),
+  the differential against serialize.c v2.1.2
+  (`db892f4ca576624817fc26bcbe2c7f2e66e367ac`, pinned in make/fuzz.mk),
   the family's pattern
   (serialize.lobster). fuzz/host.c generates 2000 programs over every
   operation from a fixed seed; serialize.c and fuzz/fuzz_driver.goose (built
