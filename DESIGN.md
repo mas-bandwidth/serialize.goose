@@ -641,14 +641,22 @@ checked puts each in its own `if` (test/smoke does).
 - A compiler warning anywhere in a test's program fails that test: zero
   warnings.
 - `make witnesses` (tools/witnesses.sh): each row deletes one rule in a
-  scratch copy of src/ and the whole suite must go red.
+  scratch copy of src/ and the whole suite must go red. Rows run in a rolling
+  pool, defaulting `JOBS` to the available core count (`nproc`, then
+  `getconf _NPROCESSORS_ONLN`); `JOBS=<n>` overrides it. `WITNESS_SHARD=k/n`
+  selects rows whose 1-based index satisfies `(index - 1) % n == k - 1`.
+  Without a shard the script runs all rows.
 - `make controls` (tools/controls.sh): the C++ reference's negative controls,
   translated line for line. Each deletes one refusal rule in a scratch copy
   of src/ and the REAL corpus, through the runner built over that copy, must
   fail EXACTLY the vectors `conformance-controls/<rule>.expected` names
   (`conf_control_main`); the unknown-operation control must be rejected.
   A needle that does not occur exactly once fails the control, and a
-  vendored `.expected` with no row fails the run.
+  vendored `.expected` with no row fails the run. Controls also use a rolling
+  pool and the same core-count `JOBS` default and override.
+- Per-commit CI gives tests, witness shards `1/2` and `2/2`, and controls plus
+  fuzz separate parallel jobs on the same serialize fleet runners. Each job
+  fetches its own pinned Goose toolchain. The corpus-pin job remains separate.
 - `make fuzz` (make/fuzz.mk; a functional test, in CI after the controls):
   the differential against serialize.c v2.1.1
   (`1d072f62e72ed357c094a7f52b29327ed8cdd862`, pinned in make/fuzz.mk),

@@ -38,12 +38,31 @@ jobs:
       - name: Test
         run: make test
 
-      - name: Reversed witnesses (each deleted rule turns the suite red)
-        run: make witnesses
+  witnesses:
+    name: reversed witnesses (${{ matrix.shard }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1/2', '2/2']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the pinned Goose toolchain
+        run: make dist-goose
+      - name: Reversed witnesses
+        run: WITNESS_SHARD=${{ matrix.shard }} make witnesses
 
+  controls-fuzz:
+    name: controls and fuzz
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the pinned Goose toolchain
+        run: make dist-goose
       - name: Negative controls (each deleted rule fails exactly its conformance-controls/*.expected)
         run: make controls
-
       - name: Fuzz
         run: if [ -f make/fuzz.mk ]; then make fuzz; fi
 

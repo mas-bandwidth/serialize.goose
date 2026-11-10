@@ -24,6 +24,6 @@ fn read_player(packet: const u8[:], destination: u8[:], p: Player&) -> bool {
 }
 ```
 
-`make dist-goose` fetches only the Linux x64 archive (`goose-v2026.2-linux-x64.tar.gz`), then `make test`, `make witnesses`, `make controls` and `make fuzz` (the differential against serialize.c). DESIGN.md is the contract.
+`make dist-goose` fetches only the Linux x64 archive (`goose-v2026.2-linux-x64.tar.gz`). Per-commit CI runs tests, two witness shards, and controls plus fuzz in parallel jobs; each job fetches the pinned toolchain. Witnesses and controls default `JOBS` to the available core count, with `JOBS=<n>` available to override it. Run `make witnesses` for all rows or set `WITNESS_SHARD=1/2` / `2/2` to run a shard. DESIGN.md is the contract.
 
 BSD 3-Clause license.

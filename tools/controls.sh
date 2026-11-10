@@ -38,7 +38,11 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 GOOSE=${GOOSE:-$root/dist/goose-v2026.2-linux-x64/goose}
 GOOSE_HOME=${GOOSE_HOME:-$root/build/goose-home}
 export GOOSE GOOSE_HOME
-JOBS=${JOBS:-4}  # shared benches: rocketnet has first claim
+if [ -z "${JOBS:-}" ]; then JOBS=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1); fi
+case "$JOBS" in ''|*[!0-9]*|0*) echo "FAIL JOBS must be a positive integer (got '$JOBS')"; exit 1 ;; esac
+if [ "${#JOBS}" -gt 4 ]; then echo "FAIL JOBS exceeds the supported maximum 4096 (got '$JOBS')"; exit 1; fi
+if [ "$JOBS" -gt 4096 ]; then echo "FAIL JOBS exceeds the supported maximum 4096 (got '$JOBS')"; exit 1; fi
+if [ "${#JOBS}" -gt 4 ]; then echo "FAIL JOBS exceeds the supported maximum 4096 (got '$JOBS')"; exit 1; fi
 corpus=${SERIALIZE_CONFORMANCE_DIR:-$root/conformance}
 controls=${SERIALIZE_CONFORMANCE_CONTROLS_DIR:-$root/conformance-controls}
 for d in "SERIALIZE_CONFORMANCE_DIR=$corpus" "SERIALIZE_CONFORMANCE_CONTROLS_DIR=$controls"; do
@@ -163,6 +167,12 @@ run_unknown_operation() {
 	fi
 }
 
+if [ "${1:-}" = --control ]; then
+	name=$2
+	run_control "$name" > "$root/build/control/$name.out"
+	exit $?
+fi
+
 mkdir -p "$root/build/control"
 results=$root/build/control/results
 names=$(table | cut -f1 | awk '!seen[$0]++')
@@ -173,25 +183,25 @@ for f in "$controls"/*.expected; do
 	printf '%s\n' "$names" | grep -qx "$n" || missing="$missing $n"
 done
 
-i=0
+for name in $names; do rm -f "$root/build/control/$name.out"; done
+rm -f "$root/build/control/xargs-failure"
+for name in $names; do printf '%s\0' "$name"; done | xargs -0 -P "$JOBS" -n 1 sh "$0" --control || xargs_status=$?
+if [ "${xargs_status:-0}" -ne 0 ]; then echo "FAIL CONTROL worker pool exited $xargs_status" > "$root/build/control/xargs-failure"; fi
 for name in $names; do
-	i=$((i + 1))
-	run_control "$name" > "$root/build/control/$i.out" &
-	if [ $((i % JOBS)) -eq 0 ]; then wait; fi
+	if [ ! -s "$root/build/control/$name.out" ]; then echo "FAIL CONTROL $name: worker produced no result" > "$root/build/control/$name.out"; fi
 done
-run_unknown_operation > "$root/build/control/0.out" &
-wait
+run_unknown_operation > "$root/build/control/0.out"
+
+i=$(printf '%s\n' $names | wc -l | tr -d ' ')
 
 total=$((i + 1))
 {
 	cat "$root/build/control/0.out"
 	k=1
-	while [ "$k" -le "$i" ]; do
-		cat "$root/build/control/$k.out"
-		k=$((k + 1))
-	done
+	for n in $names; do cat "$root/build/control/$n.out"; done
 	for n in $missing; do echo "FAIL CONTROL $n: conformance-controls/$n.expected has no row in tools/controls.sh"; done
 } | tee "$results"
+if [ -f "$root/build/control/xargs-failure" ]; then cat "$root/build/control/xargs-failure" | tee -a "$results"; rm -f "$root/build/control/xargs-failure"; fi
 
 bad=$(grep -c '^FAIL' "$results")
 if [ "$bad" -ne 0 ]; then

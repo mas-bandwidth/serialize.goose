@@ -16,7 +16,22 @@ set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 GOOSE=${GOOSE:-$root/dist/goose-v2026.2-linux-x64/goose}
 export GOOSE
-JOBS=${JOBS:-4}  # shared benches: rocketnet has first claim
+if [ -z "${JOBS:-}" ]; then JOBS=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1); fi
+case "$JOBS" in ''|*[!0-9]*|0*) echo "FAIL JOBS must be a positive integer (got '$JOBS')"; exit 1 ;; esac
+if [ "${#JOBS}" -gt 4 ]; then echo "FAIL JOBS exceeds the supported maximum 4096 (got '$JOBS')"; exit 1; fi
+if [ "$JOBS" -gt 4096 ]; then echo "FAIL JOBS exceeds the supported maximum 4096 (got '$JOBS')"; exit 1; fi
+shard=${WITNESS_SHARD:-}
+if [ -n "$shard" ]; then
+	case "$shard" in
+		[1-9]*/*) shard_k=${shard%%/*}; shard_n=${shard#*/} ;;
+		*) echo "FAIL invalid WITNESS_SHARD '$shard'"; exit 1 ;;
+	esac
+	case "$shard_k" in ''|*[!0-9]*|0*) echo "FAIL invalid WITNESS_SHARD '$shard'"; exit 1 ;; esac
+	case "$shard_n" in ''|*[!0-9]*|0*) echo "FAIL invalid WITNESS_SHARD '$shard'"; exit 1 ;; esac
+	if [ "${#shard_k}" -gt 7 ] || [ "${#shard_n}" -gt 7 ]; then echo "FAIL invalid WITNESS_SHARD '$shard'"; exit 1; fi
+	if [ "$shard_n" -lt 1 ] || [ "$shard_k" -lt 1 ] || [ "$shard_k" -gt "$shard_n" ]; then echo "FAIL invalid WITNESS_SHARD '$shard'"; exit 1; fi
+	if [ "$shard_k" -gt 1000000 ] || [ "$shard_n" -gt 1000000 ]; then echo "FAIL invalid WITNESS_SHARD '$shard'"; exit 1; fi
+fi
 
 # file<TAB>line<TAB>from<TAB>to<TAB>rule (STANDARD.md section)
 table() {
@@ -113,6 +128,14 @@ run_row() {
 	fi
 }
 
+if [ "${1:-}" = --row ]; then
+	IFS="$(printf '\t')" read -r idx file line from to rule <<EOF_ROW
+$2
+EOF_ROW
+	run_row "$idx" "$file" "$line" "$from" "$to" "$rule" > "$root/build/witness/$idx.out"
+	exit $?
+fi
+
 mkdir -p "$root/build/witness"
 results=$root/build/witness/results
 : > "$results"
@@ -123,22 +146,33 @@ table | while IFS='	' read -r file line from to rule; do
 done > "$root/build/witness/rows"
 total=$(wc -l < "$root/build/witness/rows" | tr -d ' ')
 
-# Run the rows JOBS at a time.
-while IFS='	' read -r idx file line from to rule; do
-	run_row "$idx" "$file" "$line" "$from" "$to" "$rule" > "$root/build/witness/$idx.out" &
-	if [ $((idx % JOBS)) -eq 0 ]; then wait; fi
-done < "$root/build/witness/rows"
-wait
+# Run a rolling pool so each completed row immediately makes room for another.
+if [ -n "$shard" ]; then
+	awk -F '\t' -v k="$shard_k" -v n="$shard_n" '((($1 - 1) % n) + 1) == k' "$root/build/witness/rows" > "$root/build/witness/selected"
+else
+	cp "$root/build/witness/rows" "$root/build/witness/selected"
+fi
+selected=$(wc -l < "$root/build/witness/selected" | tr -d ' ')
+while IFS="$(printf '\t')" read -r idx rest; do rm -f "$root/build/witness/$idx.out"; done < "$root/build/witness/selected"
+rm -f "$root/build/witness/xargs-failure"
+while IFS= read -r row; do printf '%s\0' "$row"; done < "$root/build/witness/selected" | xargs -0 -P "$JOBS" -I '{}' sh "$0" --row '{}' || xargs_status=$?
+if [ "${xargs_status:-0}" -ne 0 ]; then echo "FAIL WITNESS worker pool exited $xargs_status" > "$root/build/witness/xargs-failure"; fi
+while IFS="$(printf '\t')" read -r idx file line from to rule; do
+	if [ ! -s "$root/build/witness/$idx.out" ]; then echo "FAIL WITNESS $rule: worker produced no result for $file:$line" > "$root/build/witness/$idx.out"; fi
+done < "$root/build/witness/selected"
 
 idx=1
 while [ "$idx" -le "$total" ]; do
+	if grep -q "^$idx[[:space:]]" "$root/build/witness/selected"; then
 	cat "$root/build/witness/$idx.out"
+	fi
 	idx=$((idx + 1))
 done | tee "$results"
+if [ -f "$root/build/witness/xargs-failure" ]; then cat "$root/build/witness/xargs-failure" | tee -a "$results"; rm -f "$root/build/witness/xargs-failure"; fi
 
 bad=$(grep -c '^FAIL' "$results")
-if [ "$bad" -ne 0 ] || [ "$total" -eq 0 ]; then
-	echo "FAIL $bad of $total witnesses"
+if [ "$bad" -ne 0 ] || [ "$selected" -eq 0 ]; then
+	echo "FAIL $bad of $selected witnesses"
 	exit 1
 fi
-echo "ok $total witnesses"
+if [ -n "$shard" ]; then echo "ok $selected witnesses (shard $shard)"; else echo "ok $selected witnesses"; fi
