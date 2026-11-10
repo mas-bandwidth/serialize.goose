@@ -42,7 +42,6 @@ if [ -z "${JOBS:-}" ]; then JOBS=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONL
 case "$JOBS" in ''|*[!0-9]*|0*) echo "FAIL JOBS must be a positive integer (got '$JOBS')"; exit 1 ;; esac
 if [ "${#JOBS}" -gt 4 ]; then echo "FAIL JOBS exceeds the supported maximum 4096 (got '$JOBS')"; exit 1; fi
 if [ "$JOBS" -gt 4096 ]; then echo "FAIL JOBS exceeds the supported maximum 4096 (got '$JOBS')"; exit 1; fi
-if [ "${#JOBS}" -gt 4 ]; then echo "FAIL JOBS exceeds the supported maximum 4096 (got '$JOBS')"; exit 1; fi
 corpus=${SERIALIZE_CONFORMANCE_DIR:-$root/conformance}
 controls=${SERIALIZE_CONFORMANCE_CONTROLS_DIR:-$root/conformance-controls}
 for d in "SERIALIZE_CONFORMANCE_DIR=$corpus" "SERIALIZE_CONFORMANCE_CONTROLS_DIR=$controls"; do

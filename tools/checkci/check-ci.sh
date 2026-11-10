@@ -72,7 +72,7 @@ scan_job_mix() {
 
 check_job_default() {
 	file=$1
-	grep -nE '(^|[[:space:]])JOBS=([0-9]+|\$\{JOBS:-[0-9]+\})([[:space:]]|$)' "$file" | sed "s|^|$file:|"
+	grep -nE '(^|[[:space:]])JOBS=([0-9]+|\$\{JOBS:(-|=)[0-9]+\})([[:space:];]|$)|([[:space:]:{])\$\{JOBS:(-|=)[0-9]+\}' "$file" | sed "s|^|$file:|"
 }
 
 # a_tag LINE extracts the first vX.Y.Z from a FILE:LINE record, or empty.
@@ -192,6 +192,14 @@ if [ $# -eq 0 ] && [ "$bad" -eq 0 ]; then
 		else
 			printf 'control: scratch witnesses.sh with JOBS=4 failed as required:\n'
 			check_job_default "$ctl/witnesses-fixed-jobs.sh" | sed 's/^/  /'
+		fi
+
+		awk '{ if ($0 ~ /JOBS=\$\(nproc/) { sub(/JOBS=\$\(nproc.*/, "JOBS=4;") } print }' "$root/tools/witnesses.sh" >"$ctl/witnesses-jobs-default.sh"
+		if [ -z "$(check_job_default "$ctl/witnesses-jobs-default.sh")" ]; then
+			fail "control: a scratch witnesses.sh with 'then JOBS=4; fi' passed; it must fail"
+		else
+			printf 'control: scratch witnesses.sh with a fixed JOBS=4 default failed as required:\n'
+			check_job_default "$ctl/witnesses-jobs-default.sh" | sed 's/^/  /'
 		fi
 
 		rm -rf "$ctl"
