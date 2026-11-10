@@ -1,6 +1,6 @@
 // serialize_int.goose -- ranged integers and int_relative (STANDARD.md, int,
-// int64, int_relative; DESIGN.md (a), (c), (e)). Card serialize-goose-integers
-// fills this file.
+// int64, int_relative; DESIGN.md (a), (c), (e)). Primitives: serialize_int,
+// serialize_int64, serialize_int_relative, and the bits_required helpers.
 
 import std;
 import .serialize_stream;
