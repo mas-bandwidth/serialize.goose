@@ -202,6 +202,14 @@ if [ $# -eq 0 ] && [ "$bad" -eq 0 ]; then
 			check_job_default "$ctl/witnesses-jobs-default.sh" | sed 's/^/  /'
 		fi
 
+		awk 'BEGIN { print ": ${JOBS:=4}" } { print }' "$root/tools/controls.sh" >"$ctl/controls-jobs-default.sh"
+		if [ -z "$(check_job_default "$ctl/controls-jobs-default.sh")" ]; then
+			fail "control: a scratch controls.sh with ': ${JOBS:=4}' passed; it must fail"
+		else
+			printf 'control: scratch controls.sh with : ${JOBS:=4} failed as required:\n'
+			check_job_default "$ctl/controls-jobs-default.sh" | sed 's/^/  /'
+		fi
+
 		rm -rf "$ctl"
 	fi
 fi

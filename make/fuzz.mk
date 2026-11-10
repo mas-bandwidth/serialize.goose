@@ -171,9 +171,9 @@ fuzz: fuzz-host fuzz-driver fuzz-driver-opt
 	@echo "negative control (fraction bits): the Goose fixed raw bounds ignore fraction_bits"
 	@$(call fuzz_stage,$(FUZZ_BUILD)/stage-frac)
 	@cd $(FUZZ_BUILD)/stage-frac && \
-		needle='let shift = fraction_bits as u64;' && \
+		needle='serialize_u128_shl(Uint128 { lo: u.lo, hi: u.hi }, fraction_bits)' && \
 		grep -qF "$$needle" serialize_fixed.goose || { echo "fraction bits control: the needle no longer matches serialize_fixed.goose"; exit 1; } && \
-		awk -v n="$$needle" '{ i = index($$0, n); if (i > 0) { $$0 = substr($$0, 1, i - 1) "let shift = 0 as u64;" substr($$0, i + length(n)) } print }' serialize_fixed.goose >serialize_fixed.goose.tmp && \
+		awk -v n="$$needle" '{ i = index($$0, n); if (i > 0) { $$0 = substr($$0, 1, i - 1) "serialize_u128_shl(Uint128 { lo: u.lo, hi: u.hi }, 0)" substr($$0, i + length(n)) } print }' serialize_fixed.goose >serialize_fixed.goose.tmp && \
 		mv serialize_fixed.goose.tmp serialize_fixed.goose
 	@$(call fuzz_build,$(FUZZ_BUILD)/stage-frac,$(FUZZ_BUILD)/driver-frac)
 	@if $(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver-frac --tmp $(FUZZ_WORK) --programs 1000 \
@@ -189,10 +189,10 @@ fuzz: fuzz-host fuzz-driver fuzz-driver-opt
 	@echo "negative control (high group): one high 32-bit group of the Goose fixed offset comes from the wrong lane"
 	@$(call fuzz_stage,$(FUZZ_BUILD)/stage-group)
 	@cd $(FUZZ_BUILD)/stage-group && \
-		needle='if group == 2 { return (value.hi & 0xffffffff) as! u32; }' && \
-		grep -qF "$$needle" serialize_fixed.goose || { echo "high group control: the needle no longer matches serialize_fixed.goose"; exit 1; } && \
-		awk -v n="$$needle" '{ i = index($$0, n); if (i > 0) { $$0 = substr($$0, 1, i - 1) "if group == 2 { return (value.lo & 0xffffffff) as! u32; }" substr($$0, i + length(n)) } print }' serialize_fixed.goose >serialize_fixed.goose.tmp && \
-		mv serialize_fixed.goose.tmp serialize_fixed.goose
+		needle='if i == 2 { return v.hi as! u32; }' && \
+		grep -qF "$$needle" serialize_int128.goose || { echo "high group control: the needle no longer matches serialize_int128.goose"; exit 1; } && \
+		awk -v n="$$needle" '{ i = index($$0, n); if (i > 0) { $$0 = substr($$0, 1, i - 1) "if i == 2 { return v.lo as! u32; }" substr($$0, i + length(n)) } print }' serialize_int128.goose >serialize_int128.goose.tmp && \
+		mv serialize_int128.goose.tmp serialize_int128.goose
 	@$(call fuzz_build,$(FUZZ_BUILD)/stage-group,$(FUZZ_BUILD)/driver-group)
 	@if $(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver-group --tmp $(FUZZ_WORK) --programs 1000 \
 		>$(FUZZ_BUILD)/group.log 2>&1; then \
