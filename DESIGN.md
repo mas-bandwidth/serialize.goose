@@ -658,7 +658,7 @@ checked puts each in its own `if` (test/smoke does).
   fuzz separate parallel jobs on the same serialize fleet runners. Each job
   fetches its own pinned Goose toolchain. The corpus-pin job remains separate.
 - `make fuzz` (make/fuzz.mk; a functional test, in CI after the controls):
-  the differential against serialize.c v2.1.1
+  the differential against serialize.c v2.1.2
   (`1d072f62e72ed357c094a7f52b29327ed8cdd862`, pinned in make/fuzz.mk),
   the family's pattern
   (serialize.lobster). fuzz/host.c generates 2000 programs over every

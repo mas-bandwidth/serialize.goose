@@ -54,8 +54,8 @@
 # An optimized build that fails is a hard failure naming the platform
 # blocker, never a skip: optimized parity is either proven or reported.
 
-FUZZ_REF_TAG    := v2.1.1
-FUZZ_REF_COMMIT := 1d072f62e72ed357c094a7f52b29327ed8cdd862
+FUZZ_REF_TAG    := v2.1.2
+FUZZ_REF_COMMIT := db892f4ca576624817fc26bcbe2c7f2e66e367ac
 FUZZ_REF        := $(CURDIR)/.ref/serialize.c-$(FUZZ_REF_TAG)
 FUZZ_BUILD      := $(CURDIR)/build/fuzz
 FUZZ_HOST       := $(FUZZ_BUILD)/host
