@@ -660,7 +660,7 @@ checked puts each in its own `if` (test/smoke does).
   fetches its own pinned Goose toolchain. The corpus-pin job remains separate.
 - `make fuzz` (make/fuzz.mk; a functional test, in CI after the controls):
   the differential against serialize.c v2.1.2
-  (`1d072f62e72ed357c094a7f52b29327ed8cdd862`, pinned in make/fuzz.mk),
+  (`db892f4ca576624817fc26bcbe2c7f2e66e367ac`, pinned in make/fuzz.mk),
   the family's pattern
   (serialize.lobster). fuzz/host.c generates 2000 programs over every
   operation from a fixed seed; serialize.c and fuzz/fuzz_driver.goose (built
