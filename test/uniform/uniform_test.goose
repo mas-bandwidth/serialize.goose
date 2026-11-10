@@ -44,6 +44,69 @@ fn TestU4WriteStringInvalidUtf8Aborts() {
     serialize_string(w, bad, 16);
 }
 
+// ---- U5: string length declarations fit the int32 range --------------------
+
+// want-abort: serialize: string buffer_size must be in [1, 2147483648]
+fn TestU5StringWriteBufferSizeAboveInt32Aborts() {
+    var data: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(data);
+    serialize_string(w, "", 2147483649);
+}
+
+// want-abort: serialize: string buffer_size must be in [1, 2147483648]
+fn TestU5StringWriteBufferSizeAboveUint32Aborts() {
+    var data: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(data);
+    serialize_string(w, "", 4294967297);
+}
+
+// want-abort: serialize: string buffer_size must be in [1, 2147483648]
+fn TestU5StringMeasureBufferSizeAboveInt32Aborts() {
+    var m = serialize_measure_stream_init();
+    serialize_string(m, "", 2147483649);
+}
+
+// want-abort: serialize: string buffer_size must be in [1, 2147483648]
+fn TestU5StringMeasureBufferSizeAboveUint32Aborts() {
+    var m = serialize_measure_stream_init();
+    serialize_string(m, "", 4294967297);
+}
+
+fn uniform_string_large_buffer_size_refuses(buffer_size: i64) {
+    var data: u8[16] = [0; 16];
+    var r = serialize_read_stream_init(data, 8);
+    var out: u8[>..] = [];
+    out.push('x');
+    assert(!serialize_string(r, out, buffer_size));
+    assert(serialize_error(r) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
+    assert(serialize_bits_processed(r) == 0);
+    assert(out.len == 1 && out[0] == 'x');
+}
+
+fn TestU5StringReadBufferSizeAboveInt32Refuses() {
+    uniform_string_large_buffer_size_refuses(2147483649);
+}
+
+fn TestU5StringReadBufferSizeAboveUint32Refuses() {
+    uniform_string_large_buffer_size_refuses(4294967297);
+}
+
+fn TestU5StringBufferSizeAtInt32LimitAccepts() {
+    var data: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(data);
+    assert(serialize_string(w, "", 2147483648));
+    serialize_flush(w);
+    assert(serialize_bits_processed(w) == 32);
+    var m = serialize_measure_stream_init();
+    assert(serialize_string(m, "", 2147483648));
+    assert(serialize_bits_processed(m) == 38);
+    var r = serialize_read_stream_init(data, 4);
+    var out: u8[>..] = [];
+    assert(serialize_string(r, out, 2147483648));
+    assert(serialize_bits_processed(r) == 32);
+    assert(out.len == 0);
+}
+
 // ---- U6: a measure refuses nothing ----------------------------------------
 
 fn TestU6MeasureFailRecordsNothing() {

@@ -171,9 +171,9 @@ fuzz: fuzz-host fuzz-driver fuzz-driver-opt
 	@echo "negative control (fraction bits): the Goose fixed raw bounds ignore fraction_bits"
 	@$(call fuzz_stage,$(FUZZ_BUILD)/stage-frac)
 	@cd $(FUZZ_BUILD)/stage-frac && \
-		needle='for i in fraction_bits {' && \
+		needle='let shift = fraction_bits as u64;' && \
 		grep -qF "$$needle" serialize_fixed.goose || { echo "fraction bits control: the needle no longer matches serialize_fixed.goose"; exit 1; } && \
-		awk -v n="$$needle" '{ i = index($$0, n); if (i > 0) { $$0 = substr($$0, 1, i - 1) "for i in 0 {" substr($$0, i + length(n)) } print }' serialize_fixed.goose >serialize_fixed.goose.tmp && \
+		awk -v n="$$needle" '{ i = index($$0, n); if (i > 0) { $$0 = substr($$0, 1, i - 1) "let shift = 0 as u64;" substr($$0, i + length(n)) } print }' serialize_fixed.goose >serialize_fixed.goose.tmp && \
 		mv serialize_fixed.goose.tmp serialize_fixed.goose
 	@$(call fuzz_build,$(FUZZ_BUILD)/stage-frac,$(FUZZ_BUILD)/driver-frac)
 	@if $(FUZZ_HOST) --driver $(FUZZ_BUILD)/driver-frac --tmp $(FUZZ_WORK) --programs 1000 \

@@ -5,8 +5,8 @@ serialize.goose ports serialize, the open-source bitpacking serializer, to
 schema's Goose leg. This page fixes every decision; each family of files after
 it fills one set and decides nothing. Sections (a) to (g) are the contract.
 
-**The reference.** serialize.c v2.0.0
-(`e11585b0dfbf214ed37c442d5f8b6133fd8b10df`), format 2.0, is matched byte for
+**The reference.** serialize v2.1.3
+(`7bf1877b38cfdd737d0bf102a546ec2674335786`), format 2.0, is matched byte for
 byte and refusal for refusal, reason for reason. (Format 1.1 was matched
 against serialize.c v1.11.2, `7303fa47cada102af10c396c6dd5aa1f0e99f2ab`.) serialize.luau
 (`e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
@@ -119,8 +119,6 @@ its latch (U13).
 
 ### The latched kinds
 
-| kind | value | when |
-|---|---|---|
 Kinds 1 to 9 are the refusal reasons, the closed list STANDARD.md defines
 under "Refusal reasons", in serialize.c's `serialize_refusal_t` order;
 `serialize_refusal_name(kind) -> const u8[:]` spells each exactly as the
@@ -389,8 +387,9 @@ Measured at the pin, 2026-10-19:
   and a shift count is masked to the width: `(1 as u64) << 64` is 1 and
   `(1 << 63) >> 64` is `1 << 63` (measured). So every shift by a computed count
   is guarded for 0 and for the full width: a mask of `bits` bits is
-  `if bits == 64 { u64.max } else { (1 << bits) - 1 }`, a value test is
-  `bits == 32 || value >> bits == 0` (src/serialize_stream.goose, bits), and a
+  `if bits == 64 { u64.max } else { (1 << bits) - 1 }`, the value test
+  `bits != 64 && value >> (bits as u64) != 0` rejects an oversized value
+  (src/serialize_stream.goose, `serialize_bits_write_check`), and a
   split at a word boundary handles `scratch_bits == 0` and `== 64` explicitly.
 - **128 bits** is a struct of two `u64` lanes, `{ lo, hi }`, bits 0..63 and
   64..127: `Uint128` and `Int128` (serialize.c's lanes; Goose has no 128-bit
@@ -489,8 +488,8 @@ Measured at the pin, 2026-10-19:
 ## (e) WRITER AND READER
 
 **The writer is STRICT.** For every value it emits exactly the bytes
-serialize.c v2.0.0 emits, byte for byte. Every write misuse the reference
-asserts on aborts naming the rule (a), a value outside [min,max], a
+the serialize v2.1.3 standard specifies, byte for byte. Every write misuse
+the reference asserts on aborts naming the rule (a), a value outside [min,max], a
 non-finite float and a full buffer included: one mechanism, the trap (U9).
 The room check covers the whole operation's width, a string's length, align
 and payload together, an int_relative's whole ladder, before any bit moves
@@ -570,15 +569,14 @@ assigns its destination last.
 | `src/serialize_bytes.goose` | `serialize_bytes`, `serialize_string` | strings |
 | `src/serialize_object.goose` | `serialize_object` | strings |
 
-Each family file exists now with its final signatures as stubs that abort
-`serialize: <name> not implemented`; a family implementation replaces the
-bodies of its own files and edits no other file. A family may add helpers
-inside its own files, named `serialize_<family>_<name>` so no two files
-collide (one global namespace). Every import in src/ is relative to the
-importing file (`import .serialize_stream;`), so the unit works wherever a
-program vendors it. Each family adds its tests in its own `test/<name>/` and
-any make target in its own `make/<name>.mk`. Every function that implements a
-rule cites the STANDARD.md section (and this page's section) that states it.
+All primitive families in the table are implemented, with write, read and
+measure overloads. Family helpers are named `serialize_<family>_<name>`
+so no two files collide (one global namespace). Every import in src/ is
+relative to the importing file
+(`import .serialize_stream;`), so the unit works wherever a program vendors
+it. Each family adds its tests in its own `test/<name>/` and any make target in
+its own `make/<name>.mk`. Every function that implements a rule cites the
+STANDARD.md section (and this page's section) that states it.
 
 Dependencies: every family's tests need the bitpacker at run time (the
 stream packs through it). int128 and fixed use `serialize_bits_required64`
@@ -650,7 +648,9 @@ checked puts each in its own `if` (test/smoke does).
   A needle that does not occur exactly once fails the control, and a
   vendored `.expected` with no row fails the run.
 - `make fuzz` (make/fuzz.mk; a functional test, in CI after the controls):
-  the differential against serialize.c v2.0.0, the family's pattern
+  the differential against serialize.c v2.1.1
+  (`1d072f62e72ed357c094a7f52b29327ed8cdd862`, pinned in make/fuzz.mk),
+  the family's pattern
   (serialize.lobster). fuzz/host.c generates 2000 programs over every
   operation from a fixed seed; serialize.c and fuzz/fuzz_driver.goose (built
   with `goose build --debug`, one child per batch of 100) must write the same
