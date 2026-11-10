@@ -3,18 +3,18 @@
 // UTF-8. Strings are Goose's own: UTF-8
 // bytes. Writes take a const u8[:]; a string read takes any u8 builder
 // (u8[>..] or u8[..k]) by reference, cleared and filled only on success.
-// Card serialize-goose-strings fills this file.
+// Primitives: serialize_bytes, serialize_string and serialize_copy_string.
 
 import .serialize_stream;
 import .serialize_bitpacker;
 
 // ---- length field (STANDARD.md, string, step 1) ---------------------------
 //
-// The length is serialize_int(length, 0, buffer_size - 1). The ranged-int
-// card's entry point is not in this checkout yet, so the two arms below do the
-// same arithmetic for min == 0: serialization is the offset in
-// bits_required(0, max) bits, LSB-first, and 0 when max == 0 (STANDARD.md,
-// int). They are byte-for-byte serialize_int's (DESIGN.md (a)).
+// The length is serialize_int(length, 0, buffer_size - 1). serialize_int's
+// bounds are i32 and buffer_size is i64, so the functions below do the same
+// arithmetic for min == 0: the offset in bits_required(0, max) bits, LSB-first,
+// and no bits when max == 0 (STANDARD.md, int). Within i32 they match
+// serialize_int (DESIGN.md (a)).
 
 fn serialize_length_bits(max: i64) -> i64 {
     var v = max as u64;
