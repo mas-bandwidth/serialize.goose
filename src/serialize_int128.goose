@@ -1,6 +1,6 @@
 // serialize_int128.goose -- 128-bit integers as two u64 lanes (STANDARD.md,
-// uint128, int128; DESIGN.md (c)). Card serialize-goose-integers fills this
-// file.
+// uint128, int128; DESIGN.md (c)). Primitives: serialize_uint128 (128 bits)
+// and ranged serialize_int128, with Uint128 and Int128 lane helpers.
 
 import std;
 import .serialize_stream;

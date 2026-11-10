@@ -394,6 +394,46 @@ fn int_bits_required_edges() {
                                       Uint128 { lo: 0xFFFFFFFFFFFFFFFF, hi: 0xFFFFFFFFFFFFFFFF }) == 128);
 }
 
+// Every power-of-two boundary, including zero and the full width.
+fn int_helper_bit_lengths(value: u64, bits: i64) {
+    assert(serialize_fixed_bit_length64(value) == bits);
+    assert(serialize_bits_required64(0, value) == bits);
+    assert(serialize_fixed_u128_bit_length(Int128 { lo: value, hi: 0 }) == bits);
+    if value != 0 {
+        assert(serialize_fixed_u128_bit_length(Int128 { lo: 0, hi: value }) == 64 + bits);
+    }
+    if value <= 0xffffffff {
+        assert(serialize_bits_required(0, value as! u32) == bits);
+    }
+}
+
+// goose: --debug
+fn TestSerializeHelperBoundaries() {
+    int_helper_bit_lengths(0, 0);
+    for bit in 64 {
+        let power: u64 = (1 as u64) << (bit as u64);
+        int_helper_bit_lengths(power - 1, bit);
+        int_helper_bit_lengths(power, bit + 1);
+        int_helper_bit_lengths(power + 1, if bit == 0 { 2 } else { bit + 1 });
+    }
+    int_helper_bit_lengths(0xffffffffffffffff, 64);
+    assert(serialize_fixed_u128_bit_length(Int128 { lo: 0xffffffffffffffff, hi: 0xffffffffffffffff }) == 128);
+
+    // The lane shift against one-bit shifts, both signs, through and past 128.
+    let wholes: i64[5] = [0, 1, -1, 9223372036854775807, -9223372036854775808];
+    for k in wholes.len {
+        var expected = serialize_fixed_u128_from_i64(wholes[k]);
+        for shift in 130 {
+            let got = serialize_fixed_raw_bound(wholes[k], shift);
+            assert(got.lo == expected.lo && got.hi == expected.hi);
+            expected = Int128 { lo: expected.lo << 1, hi: (expected.hi << 1) | (expected.lo >> 63) };
+        }
+        let unchanged = serialize_fixed_raw_bound(wholes[k], -1);
+        let original = serialize_fixed_u128_from_i64(wholes[k]);
+        assert(unchanged.lo == original.lo && unchanged.hi == original.hi);
+    }
+}
+
 fn int64_round_trip(value: i64, min: i64, max: i64, want_bits: i64) {
     var buf: u8[16] = [0; 16];
     var w = serialize_write_stream_init(buf);

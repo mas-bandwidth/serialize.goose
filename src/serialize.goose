@@ -13,5 +13,8 @@ import .serialize_compressed_float;
 import .serialize_bytes;
 import .serialize_object;
 
+// The library version (semantic versioning, like the sibling serialize ports).
+let SERIALIZE_VERSION = "2.1.2";
+
 // The wire format this library writes and reads (STANDARD.md, Format version).
 let SERIALIZE_FORMAT_VERSION = "2.0";
