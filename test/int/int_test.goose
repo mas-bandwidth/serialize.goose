@@ -397,16 +397,13 @@ fn int_bits_required_edges() {
 // Every power-of-two boundary, including zero and the full width.
 fn int_helper_bit_lengths(value: u64, bits: i64) {
     assert(serialize_fixed_bit_length64(value) == bits);
-    if value <= 0x7fffffffffffffff {
-        assert(serialize_length_bits(value as! i64) == bits);
-    }
     assert(serialize_bits_required64(0, value) == bits);
     assert(serialize_fixed_u128_bit_length(Int128 { lo: value, hi: 0 }) == bits);
     if value != 0 {
         assert(serialize_fixed_u128_bit_length(Int128 { lo: 0, hi: value }) == 64 + bits);
     }
     if value <= 0xffffffff {
-        assert(serialize_cf_bits_required(value as! u32) == bits);
+        assert(serialize_bits_required(0, value as! u32) == bits);
     }
 }
 
@@ -420,7 +417,6 @@ fn TestSerializeHelperBoundaries() {
         int_helper_bit_lengths(power + 1, if bit == 0 { 2 } else { bit + 1 });
     }
     int_helper_bit_lengths(0xffffffffffffffff, 64);
-    assert(serialize_cf_bits_required(0xffffffff) == 32);
     assert(serialize_fixed_u128_bit_length(Int128 { lo: 0xffffffffffffffff, hi: 0xffffffffffffffff }) == 128);
 
     // The lane shift against one-bit shifts, both signs, through and past 128.

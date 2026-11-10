@@ -266,7 +266,7 @@ caller must not use it.
 `serialize_write_check`, `serialize_write_past_end`,
 `serialize_measure_add`, `serialize_bits_count_check`,
 `serialize_bits_write_check`, `serialize_string_check`), `serialize_fail_kind`,
-the length field (`serialize_length_bits`, `serialize_write_length`,
+the length field (`serialize_write_length`,
 `serialize_read_length`, `serialize_measure_length`),
 `serialize_string_capacity`, `serialize_int_relative_bits`, the
 `serialize_u128_*` lane helpers, every `cf_*` and `fixed_*` helper,

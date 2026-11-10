@@ -8,49 +8,34 @@
 import std;
 import .serialize_stream;
 import .serialize_bitpacker;
+import .serialize_int;
 
 // ---- length field (STANDARD.md, string, step 1) ---------------------------
 //
-// The length is serialize_int(length, 0, buffer_size - 1). serialize_int's
-// bounds are i32 and buffer_size is i64, so the functions below do the same
-// arithmetic for min == 0: the offset in bits_required(0, max) bits, LSB-first,
-// and no bits when max == 0 (STANDARD.md, int). Within i32 they match
-// serialize_int (DESIGN.md (a)).
-
-fn serialize_length_bits(max: i64) -> i64 {
-    if max == 0 { return 0; }
-    return 64 - clz(max as u64);
-}
+// The length is serialize_int(length, 0, buffer_size - 1). The ranged-int
+// entry point owns bits_required(0, max) and the offset arithmetic: the read
+// and write delegate to serialize_int, while the measure and the writer's room
+// check derive their bit count from serialize_bits_required (STANDARD.md, int;
+// DESIGN.md (a)). buffer_size - 1 must stay in int32 first.
 
 fn serialize_write_length(s: WriteStream&, value: i64, buffer_size: i64) -> bool {
     if buffer_size < 1 { abort("serialize: min must not be greater than max"); }
     if buffer_size - 1 > 2147483647 { abort("serialize: string buffer_size must be in [1, 2147483648]"); }
-    if value < 0 || value > buffer_size - 1 { abort("serialize: string length must fit buffer_size"); }
-    let bits = serialize_length_bits(buffer_size - 1);
-    serialize_write_check(s, bits);
-    if bits > 0 {
-        serialize_packer_write(s, value as u64, bits);
-    }
-    return true;
+    return serialize_int(s, value as! i32, 0, (buffer_size - 1) as! i32);
 }
 
 fn serialize_read_length(s: ReadStream&, value: i64&, buffer_size: i64) -> bool {
     guard buffer_size >= 1 && buffer_size - 1 <= 2147483647 else { return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE); }
-    let bits = serialize_length_bits(buffer_size - 1);
-    guard serialize_read_check(s, bits) else { return false; }
-    var v: u64 = 0;
-    if bits > 0 {
-        v = serialize_packer_read(s, bits);
-    }
-    guard v <= (buffer_size - 1) as u64 else { return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE); }
-    value = v as! i64;
+    var length: i32 = 0;
+    guard serialize_int(s, length, 0, (buffer_size - 1) as! i32) else { return false; }
+    value = length;
     return true;
 }
 
 fn serialize_measure_length(s: MeasureStream&, buffer_size: i64) -> bool {
     if buffer_size < 1 { abort("serialize: min must not be greater than max"); }
     if buffer_size - 1 > 2147483647 { abort("serialize: string buffer_size must be in [1, 2147483648]"); }
-    return serialize_measure_add(s, serialize_length_bits(buffer_size - 1));
+    return serialize_measure_add(s, serialize_bits_required(0, (buffer_size - 1) as! u32));
 }
 
 // ---- UTF-8 validation (STANDARD.md, string, Readers must refuse) ----------
@@ -141,7 +126,7 @@ fn serialize_string_check(value: const u8[:], buffer_size: i64) {
 
 fn serialize_string(s: WriteStream&, value: const u8[:], buffer_size: i64) -> bool {
     serialize_string_check(value, buffer_size);
-    let length_bits = serialize_length_bits(buffer_size - 1);
+    let length_bits = serialize_bits_required(0, (buffer_size - 1) as! u32);
     let align = (8 - (s.bits_written + length_bits) % 8) % 8;
     serialize_write_check(s, length_bits + align + value.len * 8);
     serialize_write_length(s, value.len, buffer_size);

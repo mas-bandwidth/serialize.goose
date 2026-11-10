@@ -9,14 +9,10 @@
 import std;
 import .serialize_stream;
 import .serialize_float;
+import .serialize_int;
 
 fn serialize_cf_finite(x: f32) -> bool {
     return x == x && x <= 3.4028235e38 && x >= -3.4028235e38;
-}
-
-fn serialize_cf_bits_required(max: u32) -> i64 {
-    if max == 0 { return 0; }
-    return 64 - clz(max);
 }
 
 // The largest max_integer_value: the largest float32 below 2^32, so every
@@ -29,7 +25,7 @@ let serialize_CF_MAX_INTEGER_VALUE: u32 = 4294967040;
 // bits == bits_required(0, max_integer_value), delta positive and finite.
 fn serialize_cf_precomputed_ok(max_integer_value: u32, bits: i64, delta: f32) -> bool {
     return max_integer_value >= 1 && max_integer_value <= serialize_CF_MAX_INTEGER_VALUE
-        && bits == serialize_cf_bits_required(max_integer_value) && delta > 0.0 && serialize_cf_finite(delta);
+        && bits == serialize_bits_required(0, max_integer_value) && delta > 0.0 && serialize_cf_finite(delta);
 }
 
 // A write's or a measure's precomputed constants: misuse aborts, naming the rule.
@@ -37,7 +33,7 @@ fn serialize_cf_check_precomputed(max_integer_value: u32, bits: i64, delta: f32)
     if max_integer_value < 1 || max_integer_value > serialize_CF_MAX_INTEGER_VALUE {
         abort("serialize: compressed float max_integer_value must be in [1, 4294967040]");
     }
-    if bits != serialize_cf_bits_required(max_integer_value) { abort("serialize: compressed float bits must match max_integer_value"); }
+    if bits != serialize_bits_required(0, max_integer_value) { abort("serialize: compressed float bits must match max_integer_value"); }
     if !(delta > 0.0) || !serialize_cf_finite(delta) { abort("serialize: compressed float delta must be positive and finite"); }
 }
 
@@ -57,7 +53,7 @@ fn serialize_cf_params(min: f32, max: f32, res: f32) -> bool, u32, i64, f32 {
     if max_integer_value < values {
         max_integer_value += 1;
     }
-    return true, max_integer_value, serialize_cf_bits_required(max_integer_value), delta;
+    return true, max_integer_value, serialize_bits_required(0, max_integer_value), delta;
 }
 
 // The constants derived once (serialize.c serialize_compressed_float_params):
