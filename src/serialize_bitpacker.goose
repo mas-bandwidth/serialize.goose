@@ -100,6 +100,7 @@ fn serialize_packer_read(s: ReadStream&, bits: i64) -> u64 {
 fn serialize_packer_flush(s: WriteStream&) {
     if s.scratch_bits != 0 {
         serialize_bitpacker_store_word(s.data, s.word_index * 8, s.scratch);
+        s.flushed_partial = true;
     }
 }
 

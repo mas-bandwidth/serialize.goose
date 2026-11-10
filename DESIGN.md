@@ -116,7 +116,8 @@ UTF-8 sequence and `serialize_string` with `buffer_size = dest.len` accepts
 it. The rule is on bytes, ill-formed source included. A `dest` of no bytes is
 write misuse and aborts (U9). Flush is
 required: a write buffer's contents are unspecified until `serialize_flush`
-(U11). A stream is re-initialized by assigning it a fresh init, which clears
+(U11), and a write after a flush that stored a partial word aborts (U11, U9).
+A stream is re-initialized by assigning it a fresh init, which clears
 its latch (U13).
 
 ### The latched kinds

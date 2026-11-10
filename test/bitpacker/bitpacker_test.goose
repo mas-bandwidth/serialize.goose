@@ -359,16 +359,17 @@ fn test_write_refusals_and_latch() {
     assert(serialize_error(w_full) == SERIALIZE_ERROR_NONE);
 }
 
-// A flush followed by another write continues at the next bit position: the
-// flushed word is updated, not abandoned, so the flushes store <<0xAB, 0xCD>>.
+// Flush is a pure store: flushing twice stores the same word, and the bytes
+// and the counts are the written ones. A write after a flush that stored a
+// partial word aborts (U11; TestU11BitsAfterPartialFlushAborts and its
+// siblings in test/uniform).
 fn test_write_after_flush() {
     let golden: u8[2] = [0xAB, 0xCD];
 
     var buf16: u8[16] = [0; 16];
     var w16 = serialize_write_stream_init(buf16);
-    assert(serialize_bits(w16, 0xAB, 8));
+    assert(serialize_bits(w16, 0xCDAB, 16));
     serialize_flush(w16);
-    assert(serialize_bits(w16, 0xCD, 8));
     serialize_flush(w16);
     assert(serialize_bits_processed(w16) == 16);
     assert(serialize_bytes_processed(w16) == 2);
@@ -378,9 +379,8 @@ fn test_write_after_flush() {
 
     var buf8: u8[8] = [0; 8];
     var w8 = serialize_write_stream_init(buf8);
-    assert(serialize_bits(w8, 0xAB, 8));
+    assert(serialize_bits(w8, 0xCDAB, 16));
     serialize_flush(w8);
-    assert(serialize_bits(w8, 0xCD, 8));
     serialize_flush(w8);
     assert(serialize_bits_processed(w8) == 16);
     assert(serialize_bytes_processed(w8) == 2);

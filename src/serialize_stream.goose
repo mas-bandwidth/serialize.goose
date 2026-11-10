@@ -49,6 +49,7 @@ fn serialize_refusal_name(kind: i32) -> const u8[:] {
 // A write stream over the caller's buffer, whose length is a multiple of 8:
 // the packer commits whole 64-bit words (STANDARD.md, General Conventions).
 // It has no refusal state: write misuse aborts and records nothing (U9).
+// flushed_partial is set by a flush that stored a partial word (U11).
 struct WriteStream {
     data: u8[:],
     num_bits: i64,
@@ -56,6 +57,7 @@ struct WriteStream {
     word_index: i64,
     scratch: u64,
     scratch_bits: i64,
+    flushed_partial: bool,
 }
 
 // A read stream over `bytes` bytes of data that extends at least 8 bytes
@@ -80,7 +82,7 @@ struct MeasureStream {
 fn serialize_write_stream_init(buffer: u8[:]) -> WriteStream {
     if buffer.len % 8 != 0 { abort("serialize: write buffer bytes must be a multiple of 8"); }
     return WriteStream { data: buffer, num_bits: buffer.len * 8, bits_written: 0, word_index: 0,
-                         scratch: 0, scratch_bits: 0 };
+                         scratch: 0, scratch_bits: 0, flushed_partial: false };
 }
 
 // data holds the `bytes` bytes to read plus at least 8 bytes of slack. A
@@ -111,7 +113,8 @@ fn serialize_measure_stream_init() -> MeasureStream {
 }
 
 // Writes out the partial scratch word (STANDARD.md, General Conventions, Flush).
-// Required: the buffer's contents are unspecified until it runs (U11).
+// Required: the buffer's contents are unspecified until it runs (U11). A
+// flush that stores a partial word ends the write: any later write aborts.
 fn serialize_flush(s: WriteStream&) { serialize_packer_flush(s); }
 
 // ---- the latch -------------------------------------------------------------
@@ -174,8 +177,11 @@ fn serialize_read_check(s: ReadStream&, bits: i64) -> bool {
 // A write that does not fit the room left is write misuse: it aborts before
 // any bit of the operation is written, naming the operation's whole width
 // (U9, U10; DESIGN.md (e)). Never a latched past_end: that is a reader's.
+// A write of any bit after a flush that stored a partial word aborts too:
+// its bits would land past the bytes the writer reports (U11).
 fn serialize_write_check(s: WriteStream&, bits: i64) {
     if bits > s.num_bits - s.bits_written { serialize_write_past_end(s, bits); }
+    if s.flushed_partial && bits > 0 { abort("serialize: write after a flush that stored a partial word"); }
 }
 
 // The abort, out of line so the check above stays one compare.
