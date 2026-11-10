@@ -359,6 +359,36 @@ fn test_write_refusals_and_latch() {
     assert(serialize_error(w_full) == SERIALIZE_ERROR_NONE);
 }
 
+// A flush followed by another write continues at the next bit position: the
+// flushed word is updated, not abandoned, so the flushes store <<0xAB, 0xCD>>.
+fn test_write_after_flush() {
+    let golden: u8[2] = [0xAB, 0xCD];
+
+    var buf16: u8[16] = [0; 16];
+    var w16 = serialize_write_stream_init(buf16);
+    assert(serialize_bits(w16, 0xAB, 8));
+    serialize_flush(w16);
+    assert(serialize_bits(w16, 0xCD, 8));
+    serialize_flush(w16);
+    assert(serialize_bits_processed(w16) == 16);
+    assert(serialize_bytes_processed(w16) == 2);
+    for i in 2 {
+        assert(buf16[i] == golden[i]);
+    }
+
+    var buf8: u8[8] = [0; 8];
+    var w8 = serialize_write_stream_init(buf8);
+    assert(serialize_bits(w8, 0xAB, 8));
+    serialize_flush(w8);
+    assert(serialize_bits(w8, 0xCD, 8));
+    serialize_flush(w8);
+    assert(serialize_bits_processed(w8) == 16);
+    assert(serialize_bytes_processed(w8) == 2);
+    for i in 2 {
+        assert(buf8[i] == golden[i]);
+    }
+}
+
 // ---- Conformance vector parser for bits.txt, bool.txt, align.txt -----------
 
 fn hex_nibble(c: u8) -> u8 {
@@ -634,6 +664,7 @@ fn TestBitpacker() {
     test_packer_bytes();
     test_read_latch_over_valid_data();
     test_write_refusals_and_latch();
+    test_write_after_flush();
 
     let n_bits = run_conformance_file("bits.txt");
     let n_bool = run_conformance_file("bool.txt");

@@ -131,8 +131,8 @@ public name beyond the refusal list, and the reference has none.
 | kind | value | name | when |
 |---|---|---|---|
 | `SERIALIZE_ERROR_NONE` | 0 | `none` | no error |
-| `SERIALIZE_ERROR_PAST_END` | 1 | `past_end` | a read past the end of the data; a padded init whose destination is too small |
-| `SERIALIZE_ERROR_VALUE_OUT_OF_RANGE` | 2 | `value_out_of_range` | a value read outside the range or domain it is serialized with: a ranged offset past its span, a string length above `buffer_size - 1`, a compressed integer above `max_integer_value`, an int_relative outside its domain or not above previous |
+| `SERIALIZE_ERROR_PAST_END` | 1 | `past_end` | a read past the end of the data |
+| `SERIALIZE_ERROR_VALUE_OUT_OF_RANGE` | 2 | `value_out_of_range` | a value read outside the range or domain it is serialized with: a ranged offset past its span, a string length above `buffer_size - 1`, a compressed integer above `max_integer_value`, an int_relative outside its domain or not above previous; a padded init whose destination is too small |
 | `SERIALIZE_ERROR_NONZERO_PADDING` | 3 | `nonzero_padding` | nonzero padding read by an align (or the align inside bytes and string), or by an end in the final byte |
 | `SERIALIZE_ERROR_TRAILING_DATA` | 4 | `trailing_data` | a whole byte or more left at an end |
 | `SERIALIZE_ERROR_NON_FINITE_FLOAT` | 5 | `non_finite_float` | a float or double read whose exponent field is all ones, a compressed_float decode that is not finite |
@@ -471,7 +471,7 @@ Measured at the pin, 2026-10-19:
   `serialize_read_stream_init_padded(destination, data)`, which copies it once
   into a destination of at least `data.len + 8` bytes and zeroes the slack; a
   smaller destination copies nothing and the stream starts latched
-  (`SERIALIZE_ERROR_PAST_END`), serialize.c's rule.
+  (`SERIALIZE_ERROR_VALUE_OUT_OF_RANGE`), serialize.c's rule.
 - `serialize_bytes` writes from a `const u8[:]` and reads into a caller's
   `u8[:]` whose length is the count.
 - **Strings are Goose's own: UTF-8 bytes** (STANDARD.md string: real text
