@@ -5,6 +5,7 @@
 // compile error) and is refused as VALUE_OUT_OF_RANGE on a read, before any
 // bit moves (U16): never wrong data.
 
+import std;
 import .serialize_stream;
 import .serialize_int128;
 
@@ -36,13 +37,8 @@ fn serialize_fixed_u128_compare(a: Int128, b: Int128) -> i64 {
 }
 
 fn serialize_fixed_bit_length64(value: u64) -> i64 {
-    var v = value;
-    var bits: i64 = 0;
-    while v != 0 {
-        bits += 1;
-        v = v >> 1;
-    }
-    return bits;
+    if value == 0 { return 0; }
+    return 64 - clz(value);
 }
 
 fn serialize_fixed_u128_bit_length(value: Int128) -> i64 {
@@ -51,13 +47,17 @@ fn serialize_fixed_u128_bit_length(value: Int128) -> i64 {
 }
 
 // min << fraction_bits in the 128-bit domain (serialize.c serialize_raw_bound).
+// A lane shift of 64 is not a goose shift, so the count stays in 0..63.
 fn serialize_fixed_raw_bound(whole: i64, fraction_bits: i64) -> Int128 {
-    var u = serialize_fixed_u128_from_i64(whole);
-    for i in fraction_bits {
-        let carry = u.lo >> 63;
-        u = Int128 { lo: u.lo << 1, hi: (u.hi << 1) | carry };
+    let u = serialize_fixed_u128_from_i64(whole);
+    if fraction_bits <= 0 { return u; }
+    if fraction_bits >= 128 { return Int128 { lo: 0, hi: 0 }; }
+    if fraction_bits >= 64 {
+        return Int128 { lo: 0, hi: u.lo << ((fraction_bits - 64) as u64) };
     }
-    return u;
+    let shift = fraction_bits as u64;
+    return Int128 { lo: u.lo << shift,
+                    hi: (u.hi << shift) | (u.lo >> ((64 - fraction_bits) as u64)) };
 }
 
 fn serialize_fixed_u128_group32(value: Int128, group: i64) -> u32 {

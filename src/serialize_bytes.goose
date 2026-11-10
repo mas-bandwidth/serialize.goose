@@ -5,6 +5,7 @@
 // (u8[>..] or u8[..k]) by reference, cleared and filled only on success.
 // Card serialize-goose-strings fills this file.
 
+import std;
 import .serialize_stream;
 import .serialize_bitpacker;
 
@@ -17,13 +18,8 @@ import .serialize_bitpacker;
 // int). They are byte-for-byte serialize_int's (DESIGN.md (a)).
 
 fn serialize_length_bits(max: i64) -> i64 {
-    var v = max as u64;
-    var bits: i64 = 0;
-    while v != 0 {
-        bits += 1;
-        v = v >> 1;
-    }
-    return bits;
+    if max == 0 { return 0; }
+    return 64 - clz(max as u64);
 }
 
 fn serialize_write_length(s: WriteStream&, value: i64, buffer_size: i64) -> bool {

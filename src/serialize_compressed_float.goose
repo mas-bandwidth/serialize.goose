@@ -6,6 +6,7 @@
 // precomputed constants) aborts on a write or a measure and is refused as
 // VALUE_OUT_OF_RANGE on a read, before any bit moves (U16).
 
+import std;
 import .serialize_stream;
 import .serialize_float;
 
@@ -15,13 +16,7 @@ fn serialize_cf_finite(x: f32) -> bool {
 
 fn serialize_cf_bits_required(max: u32) -> i64 {
     if max == 0 { return 0; }
-    var v = max;
-    var bits: i64 = 0;
-    while v != 0 {
-        bits += 1;
-        v = v >> 1;
-    }
-    return bits;
+    return 64 - clz(max);
 }
 
 // The largest max_integer_value: the largest float32 below 2^32, so every
