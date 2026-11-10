@@ -55,21 +55,21 @@ fn serialize_valid_utf8(data: const u8[:]) -> bool {
             i += 2;
         } else if (lead & 0xF0) == 0xE0 {
             if i + 2 >= data.len { return false; }
-            let b1 = data[i + 1];
+            let byte1 = data[i + 1];
             let b2 = data[i + 2];
-            if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 { return false; }
-            if lead == 0xE0 && b1 < 0xA0 { return false; }
-            if lead == 0xED && b1 >= 0xA0 { return false; }
+            if (byte1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 { return false; }
+            if lead == 0xE0 && byte1 < 0xA0 { return false; }
+            if lead == 0xED && byte1 >= 0xA0 { return false; }
             i += 3;
         } else if (lead & 0xF8) == 0xF0 {
             if lead > 0xF4 { return false; }
             if i + 3 >= data.len { return false; }
-            let b1 = data[i + 1];
+            let byte1 = data[i + 1];
             let b2 = data[i + 2];
             let b3 = data[i + 3];
-            if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80 { return false; }
-            if lead == 0xF0 && b1 < 0x90 { return false; }
-            if lead == 0xF4 && b1 >= 0x90 { return false; }
+            if (byte1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80 { return false; }
+            if lead == 0xF0 && byte1 < 0x90 { return false; }
+            if lead == 0xF4 && byte1 >= 0x90 { return false; }
             i += 4;
         } else {
             return false;
@@ -147,7 +147,7 @@ fn serialize_string<T>(s: ReadStream&, value: T&, buffer_size: i64) -> bool {
     }
     // A destination that cannot hold buffer_size - 1 bytes is the caller's
     // bad declaration, refused before any bit moves whatever the wire holds:
-    // never a capacity trap the wire chooses (U16; audit ledger H, 2026-10-27).
+    // never a capacity trap the wire chooses (U16).
     guard buffer_size >= 1 && buffer_size - 1 <= serialize_string_capacity(value) else {
         return serialize_fail(s, SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
     }
