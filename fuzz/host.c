@@ -39,6 +39,16 @@
     required part of it stops being emitted, so the evidence cannot
     silently narrow again.
 
+    Compressed floats are generated from a wider rotating declaration table
+    too (exact spans, spans whose delta rounds above max, the clamp band,
+    and resolutions that make max_integer_value round up or clamp), with
+    values at min, max and the top decode, below min and above max (the
+    clamped bands), and at half-step ties.  Strings rotate buffer_size
+    through the boundaries where the length field grows, and carry valid
+    two-, three- and four-byte UTF-8 sequences as well as ASCII and
+    maximum-length payloads.  The same coverage counts fail by name if a
+    required declaration or value class stops being emitted.
+
     Beyond the writers' bytes and the decoded values, the two sides also
     compare the measure stream's bit count for every program, the reader's
     consumed bit count on every accepted read, and terminal behaviour on
@@ -356,6 +366,181 @@ static void gen_fixed(Op *o, int which) {
     }
 }
 
+/* ------------------------------------------------- compressed floats --- */
+
+/* A wider declaration table than the two the generator used to know: exact
+   spans, spans whose delta rounds above max, the clamp band, values clamped
+   at either end, and resolutions that make max_integer_value round up or
+   clamp.  Every declaration satisfies the write-side contract (min < max,
+   res > 0, delta and values finite, and the top decode finite), so neither
+   writer is handed a declaration its own contract refuses. */
+typedef struct { float min, max, res; } CfloatDecl;
+
+static const CfloatDecl cfloat_decls[] = {
+    { -100.0f, 100.0f, 0.01f },
+    { 0.0f, 1.0f, 0.001f },
+    { 0.0f, 10.0f, 0.01f },
+    { -2.0f, 2.0f, 0.01f },
+    { 0.0f, 100.0f, 0.5f },
+    { 0.0f, 1.0f, 0.3f },
+    { 0.0f, 0.5f, 1.0f },
+    { -1000.0f, 1000.0f, 0.125f },
+    { 1.0f, 2.0f, 0.01f },
+    { -2.0f, -1.0f, 0.01f },
+    { 0.0f, 16777215.0f, 1.0f },
+    { -1.0f, 16777218.0f, 1.0f },
+    { 0.0f, 4294967040.0f, 1.0f },
+    { 0.0f, 10.0f, 1.0e-9f },
+};
+
+enum {
+    CF_V_MIN, CF_V_MAX, CF_V_TOP, CF_V_LOW_CLAMP, CF_V_HIGH_CLAMP,
+    CF_V_TIE, CF_V_INTERIOR, CF_V_KINDS
+};
+
+static unsigned cfloat_seq;
+static long cov_cfloat_decl[sizeof(cfloat_decls) / sizeof(cfloat_decls[0])];
+static long cov_cfloat_value[CF_V_KINDS];
+
+/* A half-step tie: the writer's scaled integer lands on n + 0.5.  The value
+   is formed in double and rounded once into float32, so the writer's own
+   float32 quotient and product see the tie the table's resolution implies. */
+static float cfloat_tie_value(const CfloatDecl *d, float delta, uint32_t max_integer_value, unsigned seq, int ndecl) {
+    unsigned n;
+    unsigned mi = max_integer_value ? max_integer_value : 1u;
+    unsigned slot = (seq / ((unsigned)ndecl * CF_V_KINDS)) % 8u;
+    switch (slot) {
+    case 0: n = 0; break;
+    case 1: n = mi > 1 ? 1 : 0; break;
+    case 2: n = mi > 2 ? 2 : mi - 1; break;
+    case 3: n = mi / 4; break;
+    case 4: n = mi / 2; break;
+    case 5: n = mi - mi / 4; if (n >= mi) n = mi - 1; break;
+    case 6: n = mi > 2 ? mi - 2 : 0; break;
+    default: n = mi - 1; break;
+    }
+    return (float)((double)d->min + (double)delta * ((double)n + 0.5) / (double)mi);
+}
+
+static void gen_cfloat(Op *o, int precomputed) {
+    int ndecl = (int)(sizeof(cfloat_decls) / sizeof(cfloat_decls[0]));
+    unsigned seq = cfloat_seq++;
+    unsigned di = seq % (unsigned)ndecl;
+    const CfloatDecl *d = &cfloat_decls[di];
+    int cat = (int)((seq / (unsigned)ndecl) % (unsigned)CF_V_KINDS);
+    uint32_t max_integer_value = 0;
+    int bits = 0;
+    float delta = 0.0f;
+    float value;
+    serialize_compressed_float_params(d->min, d->max, d->res, &max_integer_value, &bits, &delta);
+    switch (cat) {
+    case CF_V_MIN: value = d->min; break;
+    case CF_V_MAX: value = d->max; break;
+    case CF_V_TOP: value = d->min + delta; break;
+    case CF_V_LOW_CLAMP: value = d->min - delta; break;
+    case CF_V_HIGH_CLAMP: value = d->min + delta * 2.0f; break;
+    case CF_V_TIE:
+        value = cfloat_tie_value(d, delta, max_integer_value, seq, ndecl);
+        break;
+    default: {
+        float t = (float)rnd(10001) / 10000.0f;
+        value = d->min + delta * t;
+        break;
+    }
+    }
+    if (!(value == value) || value > 3.4028235e38f || value < -3.4028235e38f) value = d->min;
+    o->f1 = d->min;
+    o->f2 = d->max;
+    o->f3 = d->res;
+    o->f4 = value;
+    if (precomputed) {
+        o->cmax = max_integer_value;
+        o->cbits = bits;
+        o->cdelta = delta;
+    }
+    cov_cfloat_decl[di]++;
+    cov_cfloat_value[cat]++;
+}
+
+/* ------------------------------------------------------------- strings --- */
+
+/* Varied buffer_size declarations, including the one-byte length field and
+   the boundaries where its width grows.  The payload stays within the host's
+   64-byte scratch buffer and within buffer_size - 1 bytes. */
+static const int string_bufsizes[] = { 1, 2, 3, 4, 5, 8, 9, 16, 17, 32, 33, 64, 65, 128 };
+
+enum { STR_V_ASCII, STR_V_UTF8, STR_V_MAXLEN, STR_V_EMPTY, STR_V_KINDS };
+
+static unsigned string_seq;
+static long cov_string_bufsize[sizeof(string_bufsizes) / sizeof(string_bufsizes[0])];
+static long cov_string_value[STR_V_KINDS];
+static long cov_string_multibyte;
+
+/* Valid UTF-8 sequences with no zero byte: two-, three- and four-byte forms. */
+static const unsigned char utf8_pool[][4] = {
+    { 0xC2, 0xA9 },             /* U+00A9 (c) */
+    { 0xC3, 0xA9 },             /* U+00E9 e-acute */
+    { 0xE2, 0x82, 0xAC },       /* U+20AC euro */
+    { 0xE2, 0x98, 0x83 },       /* U+2603 snowman */
+    { 0xF0, 0x9F, 0x98, 0x80 }, /* U+1F600 grinning face */
+    { 0xF0, 0x90, 0x8D, 0x88 }, /* U+10348 */
+};
+static const int utf8_len[] = { 2, 2, 3, 3, 4, 4 };
+
+static void gen_string(Op *o) {
+    int nbuf = (int)(sizeof(string_bufsizes) / sizeof(string_bufsizes[0]));
+    unsigned seq = string_seq++;
+    unsigned bi = seq % (unsigned)nbuf;
+    int cat = (int)((seq / (unsigned)nbuf) % (unsigned)STR_V_KINDS);
+    int bufsize = string_bufsizes[bi];
+    int maxlen = bufsize - 1;
+    int len = 0;
+    if (maxlen > (int)sizeof(o->buf) - 1) maxlen = (int)sizeof(o->buf) - 1;
+    o->bufsize = bufsize;
+    cov_string_bufsize[bi]++;
+    cov_string_value[cat]++;
+
+    if (cat == STR_V_EMPTY || maxlen == 0) {
+        o->len = 0;
+        return;
+    }
+    if (cat == STR_V_MAXLEN) len = maxlen;
+    else len = (int)rnd((uint32_t)maxlen + 1);
+    if (len > maxlen) len = maxlen;
+    if (cat == STR_V_UTF8 && len < 2 && maxlen >= 2) len = 2;
+
+    if (cat == STR_V_ASCII || len < 2) {
+        for (int i = 0; i < len; i++) o->buf[i] = (unsigned char)('A' + rnd(26));
+        o->len = len;
+        return;
+    }
+    if (cat == STR_V_MAXLEN) {
+        /* Alternate the maximum-length payload between ASCII and UTF-8. */
+        if ((seq & 1u) == 0) {
+            for (int i = 0; i < len; i++) o->buf[i] = (unsigned char)('A' + rnd(26));
+            o->len = len;
+            return;
+        }
+    }
+    {
+        int idx = (int)((seq / ((unsigned)nbuf * STR_V_KINDS)) % (sizeof(utf8_pool) / sizeof(utf8_pool[0])));
+        int i = 0;
+        while (i < len) {
+            int chosen = -1;
+            for (int k = 0; k < (int)(sizeof(utf8_pool) / sizeof(utf8_pool[0])); k++) {
+                int j = (idx + k) % (int)(sizeof(utf8_pool) / sizeof(utf8_pool[0]));
+                if (utf8_len[j] <= len - i) { chosen = j; break; }
+            }
+            if (chosen < 0) break;
+            for (int k = 0; k < utf8_len[chosen]; k++) o->buf[i++] = utf8_pool[chosen][k];
+            if (utf8_len[chosen] >= 2) cov_string_multibyte++;
+            idx = (chosen + 1) % (int)(sizeof(utf8_pool) / sizeof(utf8_pool[0]));
+        }
+        while (i < len) o->buf[i++] = (unsigned char)('A' + rnd(26));
+        o->len = len;
+    }
+}
+
 /* ---------------------------------------------------------- generator --- */
 
 static void gen_op(Op *o) {
@@ -451,30 +636,13 @@ static void gen_op(Op *o) {
     case OP_FIXED32: gen_fixed(o, 0); break;
     case OP_FIXED64: gen_fixed(o, 1); break;
     case OP_FIXED128: gen_fixed(o, 2); break;
-    case OP_CFLOAT: {
-        if (rnd(2) == 0) { o->f1 = -2.0f; o->f2 = 2.0f; o->f3 = 0.01f; }
-        else { o->f1 = 0.0f; o->f2 = 100.0f; o->f3 = 0.5f; }
-        o->f4 = o->f1 + (o->f2 - o->f1) * ((float)rnd(10000) / 10000.0f);
-        break;
-    }
-    case OP_CFLOAT_PRE: {
-        uint32_t mi; int bits; float delta;
-        if (rnd(2) == 0) { o->f1 = -2.0f; o->f2 = 2.0f; o->f3 = 0.01f; }
-        else { o->f1 = 0.0f; o->f2 = 100.0f; o->f3 = 0.5f; }
-        serialize_compressed_float_params(o->f1, o->f2, o->f3, &mi, &bits, &delta);
-        o->cmax = mi; o->cbits = bits; o->cdelta = delta;
-        o->f4 = o->f1 + (o->f2 - o->f1) * ((float)rnd(10000) / 10000.0f);
-        break;
-    }
+    case OP_CFLOAT: gen_cfloat(o, 0); break;
+    case OP_CFLOAT_PRE: gen_cfloat(o, 1); break;
     case OP_BYTES:
         o->len = (int)rnd(17);
         rnd_bytes(o->buf, o->len);
         break;
-    case OP_STRING:
-        o->bufsize = 64;
-        o->len = (int)rnd(21);
-        for (int i = 0; i < o->len; i++) o->buf[i] = (unsigned char)('A' + rnd(26));
-        break;
+    case OP_STRING: gen_string(o); break;
     case OP_ALIGN: break;
     case OP_OBJECT: break;
     }
@@ -492,14 +660,18 @@ enum {
     BAD_READ_FIXED64,
     BAD_READ_FIXED128,
     BAD_READ_CFLOAT,
+    BAD_READ_CFLOAT_RANGE,
+    BAD_READ_CFLOAT_RES,
     BAD_READ_CFLOAT_PRE,
+    BAD_READ_CFLOAT_PRE_DELTA,
     BAD_READ_STRING,
     BAD_READ_KINDS
 };
 
 static const char *const bad_read_names[BAD_READ_KINDS] = {
     "reject", "bits", "bits64", "int", "int64", "int_rel", "int128",
-    "fixed32", "fixed64", "fixed128", "cfloat", "cfloat_pre", "string"
+    "fixed32", "fixed64", "fixed128", "cfloat", "cfloat_range", "cfloat_res",
+    "cfloat_pre", "cfloat_pre_delta", "string"
 };
 static long cov_bad_read[BAD_READ_KINDS];
 static unsigned bad_read_seq;
@@ -567,11 +739,30 @@ static void gen_bad_read_op(Op *o, int which) {
         o->f2 = 1.0e38f;
         o->f3 = 1.0e-38f;
         break;
+    case BAD_READ_CFLOAT_RANGE:
+        o->kind = OP_CFLOAT;
+        o->f1 = 1.0f;
+        o->f2 = 0.0f;
+        o->f3 = 0.01f;
+        break;
+    case BAD_READ_CFLOAT_RES:
+        o->kind = OP_CFLOAT;
+        o->f1 = 0.0f;
+        o->f2 = 1.0f;
+        o->f3 = 0.0f;
+        break;
     case BAD_READ_CFLOAT_PRE:
         o->kind = OP_CFLOAT_PRE;
         o->cmax = 1000;
         o->cbits = 1;
         o->cdelta = 1.0f;
+        o->f1 = 0.0f;
+        break;
+    case BAD_READ_CFLOAT_PRE_DELTA:
+        o->kind = OP_CFLOAT_PRE;
+        o->cmax = 1000;
+        o->cbits = 10;
+        o->cdelta = 0.0f;
         o->f1 = 0.0f;
         break;
     case BAD_READ_STRING:
@@ -1437,6 +1628,19 @@ int main(int argc, char **argv) {
         for (int k = 0; k < BAD_READ_KINDS; k++) {
             if (cov_bad_read[k] == 0) { printf("read-refusal coverage missing: %s\n", bad_read_names[k]); missing = 1; }
         }
+        for (size_t k = 0; k < sizeof(cfloat_decls) / sizeof(cfloat_decls[0]); k++) {
+            if (cov_cfloat_decl[k] == 0) { printf("compressed float coverage missing: declaration %zu\n", k); missing = 1; }
+        }
+        for (int k = 0; k < CF_V_KINDS; k++) {
+            if (cov_cfloat_value[k] == 0) { printf("compressed float coverage missing: value class %d\n", k); missing = 1; }
+        }
+        for (size_t k = 0; k < sizeof(string_bufsizes) / sizeof(string_bufsizes[0]); k++) {
+            if (cov_string_bufsize[k] == 0) { printf("string coverage missing: buffer_size %d\n", string_bufsizes[k]); missing = 1; }
+        }
+        for (int k = 0; k < STR_V_KINDS; k++) {
+            if (cov_string_value[k] == 0) { printf("string coverage missing: value class %d\n", k); missing = 1; }
+        }
+        if (cov_string_multibyte == 0) { printf("string coverage missing: multi-byte UTF-8\n"); missing = 1; }
         if (missing) {
             printf("--- FAIL TestDifferentialAgainstSerializeC\n");
             return 1;
@@ -1449,6 +1653,13 @@ int main(int argc, char **argv) {
         cov_width[31], cov_width[32], cov_width[33], cov_width[63], cov_width[64], cov_width[65],
         cov_width[95], cov_width[96], cov_width[97], cov_width[127], cov_width[128],
         cov_edge_min, cov_edge_min_plus, cov_edge_max_minus, cov_edge_max, cov_storage_extreme);
+    printf("compressed float coverage: %d declarations, %d value classes (min=%ld max=%ld top=%ld low-clamp=%ld high-clamp=%ld tie=%ld interior=%ld)\n",
+        (int)(sizeof(cfloat_decls) / sizeof(cfloat_decls[0])), CF_V_KINDS,
+        cov_cfloat_value[CF_V_MIN], cov_cfloat_value[CF_V_MAX], cov_cfloat_value[CF_V_TOP],
+        cov_cfloat_value[CF_V_LOW_CLAMP], cov_cfloat_value[CF_V_HIGH_CLAMP],
+        cov_cfloat_value[CF_V_TIE], cov_cfloat_value[CF_V_INTERIOR]);
+    printf("string coverage: %d buffer sizes, %d value classes, multi-byte sequences=%ld\n",
+        (int)(sizeof(string_bufsizes) / sizeof(string_bufsizes[0])), STR_V_KINDS, cov_string_multibyte);
     char rmcmd[4200];
     snprintf(rmcmd, sizeof(rmcmd), "%s/batch.txt", tmpl);
     remove(rmcmd);
