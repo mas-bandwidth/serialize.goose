@@ -81,7 +81,7 @@
   (:id "controls" :type :task :title "Negative controls: each deleted rule fails exactly its conformance-controls list" :state :done :evidence ("PR #5 on main: make controls, 16 of 16 (15 sabotaged readers on their exact .expected lists, and unknown-operation rejected) in CI"))
   (:id "port/controls" :type :work-set :children ("controls"))
   (:id "fuzz-differential" :type :task :title "Differential fuzzing against serialize.c" :state :done :evidence ("PR #7 merged to main as 2b437823b80855385443d72d73fd26a7756a0da0: make fuzz in CI, 2000 fixed-seed programs over every operation against serialize.c v2.0.0, 495 mutants agreeing on accept, step and reason; negative controls range widened, reader range refusals deleted and wrong reason each red for its own reason" "nightly-fuzz.yml dispatched on main with duration 300: run 40218563731 success, seed 40218563731, 4394500 programs green")
-   :note "the earlier head ceab089 targeted serialize.c v1.11.2 (format 1.1) and never had a PR; superseded by PR #7")
+   :note "Format 1.1 targeted serialize.c v1.11.2; superseded by PR #7")
   (:id "port/fuzz" :type :work-set :children ("fuzz-differential"))
   (:id "bench" :type :task :title "Benchmark against serialize.c, C++ serialize and serialize.rs" :state :todo :evidence ()
    :note "Not yet built.")
