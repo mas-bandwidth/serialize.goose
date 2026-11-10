@@ -12,9 +12,10 @@ import .serialize_int;
 // ---- length field (STANDARD.md, string, step 1) ---------------------------
 //
 // The length is serialize_int(length, 0, buffer_size - 1). The ranged-int
-// entry point owns bits_required(0, max) and the offset arithmetic, so the
-// three arms below delegate to it rather than repeat the rule (STANDARD.md,
-// int; DESIGN.md (a)). buffer_size - 1 must stay in int32 first.
+// entry point owns bits_required(0, max) and the offset arithmetic: the read
+// and write delegate to serialize_int, while the measure and the writer's room
+// check derive their bit count from serialize_bits_required (STANDARD.md, int;
+// DESIGN.md (a)). buffer_size - 1 must stay in int32 first.
 
 fn serialize_length_bits(max: i64) -> i64 {
     return serialize_bits_required(0, max as! u32);
@@ -37,7 +38,7 @@ fn serialize_read_length(s: ReadStream&, value: i64&, buffer_size: i64) -> bool 
 fn serialize_measure_length(s: MeasureStream&, buffer_size: i64) -> bool {
     if buffer_size < 1 { abort("serialize: min must not be greater than max"); }
     if buffer_size - 1 > 2147483647 { abort("serialize: string buffer_size must be in [1, 2147483648]"); }
-    return serialize_measure_add(s, serialize_length_bits(buffer_size - 1));
+    return serialize_measure_add(s, serialize_bits_required(0, (buffer_size - 1) as! u32));
 }
 
 // ---- UTF-8 validation (STANDARD.md, string, Readers must refuse) ----------
