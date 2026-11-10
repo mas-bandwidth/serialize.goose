@@ -248,6 +248,28 @@ fn TestU11BytesAfterPartialFlushAborts() {
     serialize_bytes(w, payload);
 }
 
+// ...and on an empty bytes write at an aligned cursor, which moves no bit...
+// want-abort: serialize: write after a flush that stored a partial word
+fn TestU11EmptyBytesAfterPartialFlushAborts() {
+    var buf: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(buf);
+    assert(serialize_bits(w, 0xAB, 8));
+    serialize_flush(w);
+    let payload: u8[0] = [];
+    serialize_bytes(w, payload);
+}
+
+// ...and on an empty string whose length field has no bits (buffer_size 1).
+// want-abort: serialize: write after a flush that stored a partial word
+fn TestU11EmptyStringAfterPartialFlushAborts() {
+    var buf: u8[16] = [0; 16];
+    var w = serialize_write_stream_init(buf);
+    assert(serialize_bits(w, 0xAB, 8));
+    serialize_flush(w);
+    let text: u8[0] = [];
+    serialize_string(w, text, 1);
+}
+
 // A flush that stored nothing (the cursor on a word boundary) ends nothing:
 // the next write starts the next word.
 fn TestU11WriteAfterWholeWordFlushContinues() {
