@@ -67,7 +67,7 @@ end-padding	src/serialize_stream.goose	guard serialize_packer_read(s, padding_bi
 int-relative-canonical	src/serialize_int.goose	if absolute && reconstructed - (previous as! u32) <= 69914 {	if false {
 string-embedded-nul	src/serialize_bytes.goose	guard payload[i] != 0 else	guard true else
 string-utf8	src/serialize_bytes.goose	guard serialize_valid_utf8(payload) else	guard true else
-string-utf8-surrogate	src/serialize_bytes.goose	if lead == 0xED && b1 >= 0xA0 {	if lead == 0xED && b1 >= 0xA0 && b1 == 0 {
+string-utf8-surrogate	src/serialize_bytes.goose	if lead == 0xED && byte1 >= 0xA0 {	if lead == 0xED && byte1 >= 0xA0 && byte1 == 0 {
 int64-through-double	src/serialize_int.goose	value = ((min as! u64) + offset) as! i64;	let through_double = (((min as! u64) + offset) as! i64) as f64; value = if through_double >= 9223372036854775807.0 { 9223372036854775807 } else { through_double as! i64 };
 wrong-reason	src/serialize_bytes.goose	serialize_fail(s, SERIALIZE_ERROR_EMBEDDED_NUL)	serialize_fail(s, SERIALIZE_ERROR_INVALID_UTF8)
 object-terminal	src/serialize_object.goose	guard serialize_error(s) == SERIALIZE_ERROR_NONE else { return false; }	guard true else { return false; }
