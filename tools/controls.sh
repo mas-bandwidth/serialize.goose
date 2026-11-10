@@ -14,9 +14,10 @@
 # A needle must occur EXACTLY ONCE in its file, or the control fails naming
 # it, so the table cannot rot silently into a control that sabotages nothing.
 # Rows that share a control name are one sabotage: a rule this port carries
-# at two sites (the ranged offset check in serialize_int and in the string
-# length field) is deleted at both, as the C++ control deletes both
-# FixedPointSerializer specializations.
+# at two sites (the object terminal check before and after the callback) is
+# deleted at both, as the C++ control deletes both FixedPointSerializer
+# specializations. The string length field reads through serialize_int, so
+# the ranged-range row there covers it.
 #
 # The unknown-operation control runs conformance-controls/unknown-operation.txt
 # through the runner, which must REJECT it (abort naming the gap), never skip.
@@ -54,7 +55,6 @@ table() {
 align-padding	src/serialize_stream.goose	guard serialize_packer_read(s, n) == 0 else	guard serialize_packer_read(s, n) != 0xFFFFFFFFFFFFFFFF else
 ranged-reconstruction	src/serialize_int.goose	value = ((min as! u32) + offset) as! i32;	value = offset as! i32;
 ranged-range	src/serialize_int.goose	if offset > (max as! u32) - (min as! u32) {	if false {
-ranged-range	src/serialize_bytes.goose	guard v <= (buffer_size - 1) as u64 else	guard true else
 fixed-degenerate-terminal	src/serialize_fixed.goose	guard s.error == SERIALIZE_ERROR_NONE else { return false; } // the latch first, zero-bit reads included	guard true else { return false; } // NEGATIVE CONTROL
 float-finite	src/serialize_float.goose	guard serialize_float_bits_are_finite(bits) else	guard serialize_float_bits_are_finite(bits) || bits != 0 else
 double-finite	src/serialize_float.goose	guard serialize_double_bits_are_finite(bits) else	guard serialize_double_bits_are_finite(bits) || bits != 0 else

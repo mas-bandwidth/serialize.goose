@@ -3,8 +3,9 @@
 // UTF-8. Strings are Goose's own: UTF-8
 // bytes. Writes take a const u8[:]; a string read takes any u8 builder
 // (u8[>..] or u8[..k]) by reference, cleared and filled only on success.
-// Card serialize-goose-strings fills this file.
+// Primitives: serialize_bytes, serialize_string and serialize_copy_string.
 
+import std;
 import .serialize_stream;
 import .serialize_bitpacker;
 import .serialize_int;
@@ -16,10 +17,6 @@ import .serialize_int;
 // and write delegate to serialize_int, while the measure and the writer's room
 // check derive their bit count from serialize_bits_required (STANDARD.md, int;
 // DESIGN.md (a)). buffer_size - 1 must stay in int32 first.
-
-fn serialize_length_bits(max: i64) -> i64 {
-    return serialize_bits_required(0, max as! u32);
-}
 
 fn serialize_write_length(s: WriteStream&, value: i64, buffer_size: i64) -> bool {
     if buffer_size < 1 { abort("serialize: min must not be greater than max"); }
@@ -129,7 +126,7 @@ fn serialize_string_check(value: const u8[:], buffer_size: i64) {
 
 fn serialize_string(s: WriteStream&, value: const u8[:], buffer_size: i64) -> bool {
     serialize_string_check(value, buffer_size);
-    let length_bits = serialize_length_bits(buffer_size - 1);
+    let length_bits = serialize_bits_required(0, (buffer_size - 1) as! u32);
     let align = (8 - (s.bits_written + length_bits) % 8) % 8;
     serialize_write_check(s, length_bits + align + value.len * 8);
     serialize_write_length(s, value.len, buffer_size);

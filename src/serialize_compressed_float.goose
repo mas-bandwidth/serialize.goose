@@ -6,6 +6,7 @@
 // precomputed constants) aborts on a write or a measure and is refused as
 // VALUE_OUT_OF_RANGE on a read, before any bit moves (U16).
 
+import std;
 import .serialize_stream;
 import .serialize_float;
 import .serialize_int;
