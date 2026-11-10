@@ -3,10 +3,10 @@
     serialize.lobster's fuzz/host.c, driving a Goose child instead).
 
     A seeded generator writes random programs over every operation
-    serialize.c v2.0.0 has (bits, bits64, bool, uint8..uint64, int, int64,
+    serialize.c has (bits, bits64, bool, uint8..uint64, int, int64,
     int_relative, uint128, int128, float, double, fixed32/64/128,
     compressed_float and its precomputed form, bytes, string, align, object,
-    end).  serialize.c (the oracle, compiled from .ref/serialize.c-v2.0.0)
+    end).  serialize.c (the oracle, compiled from .ref/serialize.c-FUZZ_REF_TAG, make/fuzz.mk)
     writes and reads each one, and the Goose port is driven as a child process
     (fuzz/fuzz_driver.goose, built once by goose build) over files in this
     test's own temporary directory, one process per batch of 100 programs.
