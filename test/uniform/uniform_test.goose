@@ -1,8 +1,7 @@
 // test/uniform -- the uniform behaviour rules U1 to U16 (IMPLEMENTING.md,
-// "Uniform behaviour: U1 to U16", reference v2.1.0) and the 2026-10-27 audit
-// ledger's findings for this port. Each test names the rule it proves. None
-// of these is a corpus vector: each is write-side, measure-side, API-shape or
-// caller-misuse behaviour, which no stream observes.
+// "Uniform behaviour: U1 to U16", reference v2.1.0). Each test names the rule
+// it proves. None of these is a corpus vector: each is write-side, measure-side,
+// API-shape or caller-misuse behaviour, which no stream observes.
 
 import .serialize;
 
@@ -327,7 +326,7 @@ fn TestU16ReadFixedBadFormatRefuses() {
     assert(serialize_error(r2) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
 }
 
-// Ledger M (TestAuditFixedBoundsOutsideQFormat): Q16.16 holds whole units in
+// Fixed bounds outside the Q format: Q16.16 holds whole units in
 // [-32768, 32767], so [0, 40000] is a bad declaration. Before 2.1 the reader
 // accepted an in-span offset off the wire and returned -1673527296 for a
 // field whose min is 0.
@@ -341,7 +340,7 @@ fn TestU16ReadFixedBoundsOutsideQFormatRefuses() {
     assert(serialize_error(r) == SERIALIZE_ERROR_VALUE_OUT_OF_RANGE);
     assert(serialize_bits_processed(r) == 0);
 
-    // Ledger M (TestAuditFixed64BoundsOverflowRawWraps): Q48.16 [0, 2^50],
+    // Fixed64 bounds whose raw max overflows int64: Q48.16 [0, 2^50],
     // whose raw max overflows int64.
     var r2 = serialize_read_stream_init(data, 8);
     var w: i64 = 7;
@@ -418,7 +417,7 @@ fn TestU16WritePrecomputedMaxIntegerValueAboveLimitAborts() {
     serialize_compressed_float_precomputed(w, 0.5, 4294967295, 32, 1.0, 0.0);
 }
 
-// Ledger L (TestAuditCompressedFloatMeasureAcceptsMismatchedBits): the
+// A precomputed measure accepting mismatched bits: the
 // measure checked only [1,32], so a mismatched declaration measured 1 bit
 // where the writer would need 10.
 // want-abort: serialize: compressed float bits must match max_integer_value
@@ -443,11 +442,10 @@ fn TestU16ReadIntRelativePreviousOutsideDomainRefuses() {
     assert(serialize_bits_processed(r) == 0);
 }
 
-// Ledger H (TestAuditStringLimitedBuilderWireDriven): a string read into a
-// limited builder whose capacity is below buffer_size - 1 let the WIRE
-// choose a trap ("limited array capacity exceeded") by sending a length past
-// the capacity. The declaration is checked against the destination before
-// any bits move, and refused: never a trap, whatever the wire holds.
+// A string read into a limited builder whose capacity is below buffer_size - 1
+// let the WIRE choose a trap ("limited array capacity exceeded") by sending a
+// length past the capacity. The declaration is checked against the destination
+// before any bits move, and refused: never a trap, whatever the wire holds.
 fn TestU16StringLimitedBuilderCapacityRefusesNeverTraps() {
     var wire: u8[72] = [0; 72];
     let n = uniform_string_wire("abcdefghij", 64, wire);
@@ -459,8 +457,7 @@ fn TestU16StringLimitedBuilderCapacityRefusesNeverTraps() {
     assert(serialize_bits_processed(r) == 0);
 
     // The same declaration with a short wire string is the same bad
-    // declaration: refused, decided by the caller's arguments, not the data
-    // (ledger H, TestAuditStringLimitedBuilderMisuseNotChecked).
+    // declaration: refused, decided by the caller's arguments, not the data.
     var short: u8[72] = [0; 72];
     let m = uniform_string_wire("ab", 64, short);
     var r2 = serialize_read_stream_init(short, m);

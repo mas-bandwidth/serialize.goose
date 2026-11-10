@@ -1462,7 +1462,7 @@ fn TestConformanceUnknownOperationRejected() {
 }
 
 // wstring is an unknown operation in format 2.0: a record naming it is
-// rejected, never run (PORT-BRIEF, the unknown-operation control).
+// rejected, never run (the unknown-operation control).
 // want-abort: conformance: no runner for this operation, parameter, or fixed declaration
 fn TestConformanceWstringRejected() {
     let body: u8[>..] = "operation wstring\nname control\nparam buffer_size = 8\nbytes 00\nexpect value =\nconsumed 3\n";

@@ -15,7 +15,7 @@ The Goose port of serialize, the open-source bitpacking serializer: the same wir
 | The rejected reason and the uniform rules U1 to U16 | ✅ |
 | The 2.1.1 rulings: one write-misuse trap (U9), measure checks (U6), copy_string and exports (U15) | ✅ |
 | Format 2.0: refusal reasons, finite floats, end, canonical int_relative | ✅ |
-| Fleet CI workflow and its invariant test | ✅ |
+| CI workflow and its invariant test | ✅ |
 | 64-bit bitpacker and window reader | ✅ |
 | Ranged integers, int64, int128, uint128 and relative ints | ✅ |
 | float, double, fixed and compressed floats | ✅ |
@@ -34,4 +34,4 @@ The Goose port of serialize, the open-source bitpacking serializer: the same wir
 
 ## About this page
 
-Each table lists the features of one area: ✅ is built, tested and landed, with the evidence in the source data; ❌ is not yet. The open rows were sprint cards when the sprint stopped for its pit stop on 2026-10-20; each one names its card, its archived brief and any pushed head in the source data, so the work can be picked up again.
+Each table lists the features of one area: ✅ is built, tested and landed, with the evidence in the source data; ❌ is not yet. The open rows are not yet built; each one records what remains in the source data, so the work can be picked up again.

@@ -451,7 +451,7 @@ fn TestSerializeStrings() {
     assert(n_object == 12);
 }
 
-// Allocate-before-check (PORT-BRIEF, added 2026-10-22): a length field that
+// Allocate-before-check (added 2026-10-22): a length field that
 // claims far more bytes than the stream holds is refused as PAST_END before
 // the destination is touched or grown. buffer_size 2^20 gives a 20-bit length
 // field; all ones claims 1048575 bytes over a 4-byte stream.

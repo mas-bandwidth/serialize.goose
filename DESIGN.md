@@ -1,16 +1,15 @@
-# serialize.goose: the design every card copies
+# serialize.goose: the design specification
 
 serialize.goose ports serialize, the open-source bitpacking serializer, to
 [Goose](https://github.com/aardappel/goose). It is the bottom layer under
-schema's Goose leg. This page fixes every decision; each family card after it
-fills one set of files and decides nothing. Sections (a) to (g) are the
-contract.
+schema's Goose leg. This page fixes every decision; each family of files after
+it fills one set and decides nothing. Sections (a) to (g) are the contract.
 
 **The reference.** serialize v2.1.3
 (`7bf1877b38cfdd737d0bf102a546ec2674335786`), format 2.0, is matched byte for
 byte and refusal for refusal, reason for reason. (Format 1.1 was matched
-against serialize.c v1.11.2, `7303fa47cada102af10c396c6dd5aa1f0e99f2ab`.) serialize.luau (branch `sprint/serialize-luau`,
-`e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
+against serialize.c v1.11.2, `7303fa47cada102af10c396c6dd5aa1f0e99f2ab`.) serialize.luau
+(`e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
 supplied the shape of this page. Both are read, never imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`,
@@ -370,7 +369,7 @@ The rules for this library:
 
 ## (c) THE NUMBER MODEL
 
-Measured on hetzner2 and hulk, 2026-10-19, at the pin:
+Measured at the pin, 2026-10-19:
 
 - **Every value of 64 bits or fewer is Goose's own integer type** (`i8..i64`,
   `u8..u64`), at serialize.c's width and signedness. Arithmetic is at the
@@ -401,7 +400,7 @@ Measured on hetzner2 and hulk, 2026-10-19, at the pin:
 - **Float bits: `bytes_of` out, `from_bytes` in.** Goose has no
   float-to-bits cast. Two routes were built and timed (100,000,000 round
   trips f32 -> bits -> f32, a serial dependency chain, `goose build -O2` with
-  gcc 13.3, hulk, 2026-10-19):
+  gcc 13.3, 2026-10-19):
 
   | route | `goose build -O2` | `goose run` (TinyCC) |
   |---|---|---|
@@ -430,7 +429,7 @@ Measured on hetzner2 and hulk, 2026-10-19, at the pin:
   ```
 
   and the f64 pair the same with 8 bytes (prefix 8). Never arithmetic. The
-  floats card proves bit identity on subnormals and -0, in both builds.
+  float tests prove bit identity on subnormals and -0, in both builds.
 - **Finite values only** (STANDARD.md, format 2.0): the finite test is on
   the BITS (`bits & 0x7F800000 != 0x7F800000`, `0x7FF0000000000000` for
   double), so no conversion can quiet a signaling NaN before the test sees
@@ -459,12 +458,12 @@ Measured on hetzner2 and hulk, 2026-10-19, at the pin:
   Implementation Law, the buffer contract): `data.len >= bytes + 8`, so the
   packer may load a 64-bit window at any byte position inside the message
   without a tail case; bytes past `bytes` are loaded and never interpreted.
-  Measured (hulk, 2026-10-19, `goose build -O2`, 13-bit fields over a
+  Measured (2026-10-19, `goose build -O2`, 13-bit fields over a
   1200-byte message, two rounds): the slack window read 2.09 and 2.22 ns per
   field, the exact-length read with a tail branch 2.24 and 2.51 ns, so slack
   is 7 to 12 percent faster, and the speed rule makes it the contract.
-  Goose's checked indexing is a NAMED RESIDUAL here (the bench's bce line
-  elided 0 of 25 index checks in that loop); the bitpacker card gives the
+  Goose's checked indexing is a NAMED RESIDUAL here (the bounds-check line
+  elided 0 of 25 index checks in that loop); the bitpacker gives the
   analysis a length it can use (an `assert` of the window against
   `data.len`, Goose tutorial section 17) and measures again.
 - A payload in an exactly sized allocation is read through
@@ -557,26 +556,26 @@ assigns its destination last.
 
 ## (f) THE FILE LAYOUT
 
-| file | holds | card |
+| file | holds | implemented by |
 |---|---|---|
-| `src/serialize.goose` | the entry: imports every file; `SERIALIZE_FORMAT_VERSION` | serialize-goose-design (this card) |
-| `src/serialize_stream.goose` | the stream types, the latch and its reasons, terminality, accounting, the gates, bits/bits64/bool/uint8..64/align/end/flush | serialize-goose-design (this card) |
-| `src/serialize_bitpacker.goose` | the packer: `serialize_packer_write`, `_read`, `_flush`, `_write_bytes`, `_read_bytes` | serialize-goose-bitpacker |
-| `src/serialize_int.goose` | `serialize_bits_required`, `serialize_bits_required64`, `serialize_int`, `serialize_int64`, `serialize_int_relative` | serialize-goose-integers |
-| `src/serialize_int128.goose` | `Uint128`, `Int128` and their helpers, `serialize_uint128`, `serialize_int128` | serialize-goose-integers |
-| `src/serialize_float.goose` | `serialize_f32_bits` and its three siblings, `serialize_float`, `serialize_double` | serialize-goose-floats |
-| `src/serialize_fixed.goose` | `serialize_fixed32`, `serialize_fixed64`, `serialize_fixed128` | serialize-goose-floats |
-| `src/serialize_compressed_float.goose` | `serialize_compressed_float_params`, `serialize_compressed_float`, `serialize_compressed_float_precomputed` | serialize-goose-floats |
-| `src/serialize_bytes.goose` | `serialize_bytes`, `serialize_string` | serialize-goose-strings |
-| `src/serialize_object.goose` | `serialize_object` | serialize-goose-strings |
+| `src/serialize.goose` | the entry: imports every file; `SERIALIZE_FORMAT_VERSION` | design (this document) |
+| `src/serialize_stream.goose` | the stream types, the latch and its reasons, terminality, accounting, the gates, bits/bits64/bool/uint8..64/align/end/flush | design (this document) |
+| `src/serialize_bitpacker.goose` | the packer: `serialize_packer_write`, `_read`, `_flush`, `_write_bytes`, `_read_bytes` | bitpacker |
+| `src/serialize_int.goose` | `serialize_bits_required`, `serialize_bits_required64`, `serialize_int`, `serialize_int64`, `serialize_int_relative` | integers |
+| `src/serialize_int128.goose` | `Uint128`, `Int128` and their helpers, `serialize_uint128`, `serialize_int128` | integers |
+| `src/serialize_float.goose` | `serialize_f32_bits` and its three siblings, `serialize_float`, `serialize_double` | floats |
+| `src/serialize_fixed.goose` | `serialize_fixed32`, `serialize_fixed64`, `serialize_fixed128` | floats |
+| `src/serialize_compressed_float.goose` | `serialize_compressed_float_params`, `serialize_compressed_float`, `serialize_compressed_float_precomputed` | floats |
+| `src/serialize_bytes.goose` | `serialize_bytes`, `serialize_string` | strings |
+| `src/serialize_object.goose` | `serialize_object` | strings |
 
 All primitive families in the table are implemented, with write, read and
 measure overloads. Family helpers are named `serialize_<family>_<name>`
 so no two files collide (one global namespace). Every import in src/ is
 relative to the importing file
 (`import .serialize_stream;`), so the unit works wherever a program vendors
-it. Each card adds its tests in its own `test/<name>/` and any make target in
-its own `make/<card>.mk`. Every function that implements a rule cites the
+it. Each family adds its tests in its own `test/<name>/` and any make target in
+its own `make/<name>.mk`. Every function that implements a rule cites the
 STANDARD.md section (and this page's section) that states it.
 
 Dependencies: every family's tests need the bitpacker at run time (the
@@ -600,13 +599,13 @@ checked puts each in its own `if` (test/smoke does).
   (`dist/goose-v2026.2-linux-x64/goose`, its `stdlib/` and `tcclib/` beside
   it). dist/ and build/ are gitignored. It is setup, run once, never from a
   test.
-- `GOOSE ?= dist/goose-v2026.2-linux-x64/goose`, overridable (the fleet
-  installs the same pin); `make toolchain-goose` refuses by name a `GOOSE`
+- `GOOSE ?= dist/goose-v2026.2-linux-x64/goose`, overridable (CI installs the
+  same pin); `make toolchain-goose` refuses by name a `GOOSE`
   that does not resolve. `GOOSE_HOME` defaults to `build/goose-home`, so
   nothing the compiler caches leaves the job.
 - `make test` runs every `test/*/`; `make test T=<name>` runs `test/<name>/`,
   both through `tools/run_tests.sh`. The Makefile ends with
-  `-include make/*.mk`, where later cards add targets in their own files.
+  `-include make/*.mk`, where later families add targets in their own files.
 - A test file is `test/<name>/<x>_test.goose`; each `fn Test<Name>()` at the
   start of a line is one test. For each test directory the runner stages
   `build/run/<name>/` (a copy of `src/*.goose`, every `.goose` file of the
@@ -625,9 +624,8 @@ checked puts each in its own `if` (test/smoke does).
   FAIL, on a missing or empty `test/<name>/` (`FAIL test/nosuch/ is missing`), and on a test file that declares no test, naming each: never a
   skip. Its last line is `ok N test directories` or `FAIL k of N test directories`.
 - Anything timed is built, never run under TinyCC:
-  `$GOOSE build -O2 <file>.goose -o <exe>` with the bench's gcc 13 (and
-  clang where a card compares), and lives in its card's own make target,
-  never in `make test`.
+  `$GOOSE build -O2 <file>.goose -o <exe>` with gcc 13 (and clang where a
+  comparison is made), and lives in its own make target, never in `make test`.
 - Unit tests use no real time, no sockets, no network and no outside
   services; a test clock, where one is ever needed, is an argument starting at
   1000.0.

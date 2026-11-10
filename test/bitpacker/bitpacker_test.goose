@@ -271,7 +271,7 @@ fn test_packer_bytes() {
     }
 }
 
-// Rowan's mandatory check: feed VALID data with plenty of remaining bits after
+// Mandatory check: feed VALID data with plenty of remaining bits after
 // a forced read error (both via serialize_fail and via a data-triggered refusal
 // in byte 0) and prove every subsequent read stays refused, leaves its
 // destination untouched, and consumes 0 bits. Removing the latch guard in
@@ -291,12 +291,12 @@ fn test_read_latch_over_valid_data() {
     assert(serialize_error(r1) == SERIALIZE_ERROR_REJECTED);
     assert(serialize_bits_remaining(r1) == 128);
 
-    var b1 = false;
+    var bit = false;
     var u32_1: u32 = 0x13572468;
     var u64_1: u64 = 0x1122334455667788;
     var u8_1: u8 = 0x42;
     var u16_1: u16 = 0x4242;
-    assert(!serialize_bool(r1, b1) && !b1);
+    assert(!serialize_bool(r1, bit) && !bit);
     assert(!serialize_bits(r1, u32_1, 8) && u32_1 == 0x13572468);
     assert(!serialize_bits64(r1, u64_1, 16) && u64_1 == 0x1122334455667788);
     assert(!serialize_uint8(r1, u8_1) && u8_1 == 0x42);
@@ -323,7 +323,7 @@ fn test_read_latch_over_valid_data() {
     assert(serialize_bits_remaining(r2) == 120);
 
     // Every subsequent read over the remaining 120 valid bits MUST be refused.
-    assert(!serialize_bool(r2, b1) && !b1);
+    assert(!serialize_bool(r2, bit) && !bit);
     assert(!serialize_bits(r2, u32_1, 8) && u32_1 == 0x13572468);
     assert(!serialize_bits64(r2, u64_1, 16) && u64_1 == 0x1122334455667788);
     assert(!serialize_uint8(r2, u8_1) && u8_1 == 0x42);
