@@ -30,7 +30,7 @@
 # The corpus and the controls' lists are the vendored conformance/ and
 # conformance-controls/ unless SERIALIZE_CONFORMANCE_DIR and
 # SERIALIZE_CONFORMANCE_CONTROLS_DIR name other directories (the nightly
-# functional test points them at mas-bandwidth/serialize main). One that is
+# functional test points them at mas-bandwidth/serialize at the corpus pin). One that is
 # not a directory fails, naming it. Output: one line per control, then
 # `ok N controls` or `FAIL k of N controls`.
 set -u

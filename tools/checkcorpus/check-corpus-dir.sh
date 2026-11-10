@@ -2,7 +2,7 @@
 # tools/checkcorpus/check-corpus-dir.sh -- TEST TestCorpusDir, a unit test of
 # SERIALIZE_CONFORMANCE_DIR and SERIALIZE_CONFORMANCE_CONTROLS_DIR (the corpus
 # override in tools/run_tests.sh and tools/controls.sh, which the nightly
-# functional test points at mas-bandwidth/serialize main).
+# functional test points at mas-bandwidth/serialize at the corpus pin).
 #
 # No Goose, no network, no real time: GOOSE is a stub that records what the
 # runner staged beside it and exits. The fixtures are scratch directories

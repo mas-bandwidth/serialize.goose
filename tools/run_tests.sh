@@ -20,7 +20,7 @@
 #
 # The corpus is the vendored conformance/ unless SERIALIZE_CONFORMANCE_DIR names
 # another directory (the nightly functional test points it at
-# mas-bandwidth/serialize main). A SERIALIZE_CONFORMANCE_DIR that is not a
+# mas-bandwidth/serialize at the corpus pin). A SERIALIZE_CONFORMANCE_DIR that is not a
 # directory fails, naming it: never a silent fall back to the vendored copy.
 #
 # EXTRA CORPUS DIRECTORIES: conformance-regress/ (this port's fixed regression
