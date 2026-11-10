@@ -99,6 +99,10 @@ fn touch_every_helper(never: bool) {
 }
 
 fn TestSmoke() {
+    // The library and wire format versions are the ones this port declares.
+    assert(SERIALIZE_VERSION == "2.1.2");
+    assert(SERIALIZE_FORMAT_VERSION == "2.0");
+
     // The entry compiled to get here. Every name resolves: instantiate the
     // operations on the three streams, each behind a condition the compiler
     // cannot fold and that is false when the test runs.
