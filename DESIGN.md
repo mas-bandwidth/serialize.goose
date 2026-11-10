@@ -5,8 +5,8 @@ serialize.goose ports serialize, the open-source bitpacking serializer, to
 schema's Goose leg. This page fixes every decision; each family of files after
 it fills one set and decides nothing. Sections (a) to (g) are the contract.
 
-**The reference.** serialize v2.1.3
-(`7bf1877b38cfdd737d0bf102a546ec2674335786`), format 2.0, is matched byte for
+**The reference.** serialize v2.1.4
+(`65e43ca1fef11362300f2ca569a7177c2718f20a`), format 2.0, is matched byte for
 byte and refusal for refusal, reason for reason. (Format 1.1 was matched
 against serialize.c v1.11.2, `7303fa47cada102af10c396c6dd5aa1f0e99f2ab`.) serialize.luau
 (`e9acef6fee5efbb1c7b33a25843dba9aa59f6b22`) is the closest worked port and
@@ -14,9 +14,11 @@ supplied the shape of this page. Both are read, never imported.
 
 **The vendored standard.** `STANDARD.md`, `IMPLEMENTING.md`,
 `conformance/*.txt` and `conformance-controls/` are copied
-VERBATIM from mas-bandwidth/serialize at tag v2.1.3
-(`7bf1877b38cfdd737d0bf102a546ec2674335786`, 2026-10-29, the 2.1.3 release;
-2.1.1 merged the 2.1.1 rulings), format 2.0 still. 2.1.1 changed IMPLEMENTING.md only: one
+VERBATIM from mas-bandwidth/serialize at tag v2.1.4
+(`65e43ca1fef11362300f2ca569a7177c2718f20a`, 2026-11-10, the 2.1.4 release;
+2.1.1 merged the 2.1.1 rulings), format 2.0 still. 2.1.4 changed IMPLEMENTING.md
+only: a bytes read with no destination (U7), a write after a flush (U11), and a
+destination's capacity (U16). 2.1.1 changed IMPLEMENTING.md only: one
 write-misuse mechanism, the trap (U9), a measure making every write check
 (U6), lone surrogates as write misuse (U3), the copy_string back-off and the
 exports ruling (U15); the corpus and STANDARD.md are 2.1.0's. 2.1
@@ -488,7 +490,7 @@ Measured at the pin, 2026-10-19:
 ## (e) WRITER AND READER
 
 **The writer is STRICT.** For every value it emits exactly the bytes
-the serialize v2.1.3 standard specifies, byte for byte. Every write misuse
+the serialize v2.1.4 standard specifies, byte for byte. Every write misuse
 the reference asserts on aborts naming the rule (a), a value outside [min,max], a
 non-finite float and a full buffer included: one mechanism, the trap (U9).
 The room check covers the whole operation's width, a string's length, align

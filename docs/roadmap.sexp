@@ -17,7 +17,7 @@
    :text ("The Goose port of serialize, the open-source bitpacking serializer: the same wire as serialize.c, byte for byte, with the same refusals. The families and the conformance runner are on main (PR #2, PR #3, 2026-10-22); format 2.0 landed with PR #5 (2026-10-22); the reference 2.1.0 standard, the rejected reason and the uniform rules U1-U16 landed with PR #10 (2026-10-27); the 2.1.1 rulings (one write-misuse trap, measure checks, copy_string, exports) landed with PR #11 (2026-10-27).")
    :rows
    (("design" "Design, family stubs and test runner")
-    ("standard" "STANDARD.md matches serialize v2.1.3")
+    ("standard" "STANDARD.md matches serialize v2.1.4")
     ("uniform" "The rejected reason and the uniform rules U1 to U16")
     ("rulings" "The 2.1.1 rulings: one write-misuse trap (U9), measure checks (U6), copy_string and exports (U15)")
     ("format2" "Format 2.0: refusal reasons, finite floats, end, canonical int_relative")
@@ -53,7 +53,7 @@
   (:id "design" :type :task :title "Design, family stubs and test runner" :state :done :evidence ("land commit 5a1636d75863"))
   (:id "port/design" :type :work-set :children ("design"))
   (:id "standard-matches-upstream" :type :task :title "STANDARD.md matches serialize v1.17.0" :state :done :evidence ("land commit ca44b72a107c"))
-  (:id "standard-2-0" :type :task :title "STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match serialize v2.1.3" :state :done :evidence ("PR #5 on main: first vendored format 2.0; the corpus job then diffed all four against the format 2.0 release tag in CI" "now vendored from tag v2.1.3: SERIALIZE_TAG in .github/workflows/ci.yml, and the corpus job diffs all four against it"))
+  (:id "standard-2-0" :type :task :title "STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match serialize v2.1.4" :state :done :evidence ("PR #5 on main: first vendored format 2.0; the corpus job then diffed all four against the format 2.0 release tag in CI" "now vendored from tag v2.1.4: SERIALIZE_TAG in .github/workflows/ci.yml, and the corpus job diffs all four against it"))
   (:id "standard-2-1" :type :task :title "STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match serialize v2.1.0" :state :done :evidence ("PR #10: re-vendored from tag v2.1.0, commit 884bc3098c96; the corpus job diffs all four against the tag; TestConformanceCorpus 413 of 413, 19 of 19 controls exact"))
   (:id "standard-2-1-1" :type :task :title "STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match serialize v2.1.1" :state :done :evidence ("PR #11: re-vendored from tag v2.1.1, commit bd3d67e23c8a; IMPLEMENTING.md changed, the corpus did not; the corpus job diffs all four against the tag"))
   (:id "port/standard" :type :work-set :children ("standard-matches-upstream" "standard-2-0" "standard-2-1" "standard-2-1-1"))
